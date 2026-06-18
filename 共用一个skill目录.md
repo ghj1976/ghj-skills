@@ -68,6 +68,11 @@ New-Item -ItemType SymbolicLink -Path "D:\test\wxds\.opencode\skills" -Target "E
 
 New-Item -ItemType SymbolicLink -Path "D:\test\wxds\.opencode\skills" -Target "E:\mycode\ghj-skills\skills"
 
+
+
+
+New-Item -ItemType SymbolicLink -Path "C:\Users\郭红俊\.config\opencode\skills\ghjskills" -Target "E:\mycode\ghj-skills\skills"
+
 ```
 
 
