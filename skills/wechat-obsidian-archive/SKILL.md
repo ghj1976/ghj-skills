@@ -79,7 +79,7 @@ with open("output.json", "r", encoding="utf-8") as f:
     data = json.load(f)
 
 meta = data["meta"]
-content = data["content"]  # 图片是相对路径（如 _assets/xxx/abc.jpg），直接使用
+content = data["content"]  # 图片是相对路径（如 assets/2026-06-18/abc.jpg），直接使用
 file_path = data["file_path"]  # 已展开为绝对路径
 
 frontmatter = f"""---
@@ -174,7 +174,7 @@ tags: [公众号存档]
 
 ### 关键陷阱：勿重新下载图片
 
-脚本返回的 `content` 中，图片路径已经是相对于 markdown 文件的**相对路径**（如 `_assets/xxx/abc.jpg`），写入文件时**直接使用即可**。
+脚本返回的 `content` 中，图片路径已经是相对于 markdown 文件的**相对路径**（如 `assets/2026-06-18/abc.jpg`），写入文件时**直接使用即可**。
 
 **切勿重新抓取页面或再次下载图片**，否则会导致：
 - 同一张图片产生多个副本（UUID 文件名不同），浪费磁盘空间
@@ -186,8 +186,8 @@ tags: [公众号存档]
 | 路径 | 格式 | 示例 |
 |------|------|------|
 | `file_path` | 绝对路径（已展开 `~`） | `C:\Users\郭红俊\参考资料库\...\file.md` |
-| `assets_dir` | 绝对路径（已展开 `~`） | `C:\Users\郭红俊\参考资料库\...\_assets\date\` |
-| content 中图片路径 | 相对于 `file_path` 所在目录 | `_assets\2026年05月...\abc.jpg` |
+| `assets_dir` | 绝对路径（已展开 `~`） | `C:\Users\郭红俊\参考资料库\...\assets\date\` |
+| content 中图片路径 | 相对于 `file_path` 所在目录 | `assets\2026-06-18\abc.jpg` |
 
 图片路径在写入 markdown 前建议将 `\` 转为 `/` 以确保跨平台兼容：
 ```python

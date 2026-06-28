@@ -23,7 +23,7 @@ WECHAT_UA = (
 )
 
 DEFAULT_OUTPUT_DIR = os.path.expanduser("~/参考资料库/公众号文章")
-DEFAULT_ASSETS_DIR_NAME = "_assets"
+DEFAULT_ASSETS_DIR_NAME = "assets"
 
 
 def fetch_page(url: str) -> str:
@@ -105,26 +105,31 @@ def extract_content(html: str, assets_dir: str, md_file_path: str) -> str:
     for tag in content_div.find_all(["script", "style"]):
         tag.decompose()
 
-    img_tags = content_div.find_all("img")
-    placeholder_map = {}
     md_dir = os.path.dirname(md_file_path) if md_file_path else ""
 
-    for img in img_tags:
+    for img in content_div.find_all("img"):
         src = img.get("data-src") or img.get("src") or ""
         if not src:
             continue
         src = src.replace("&amp;", "&")
-
         local_path = download_image(src, assets_dir)
         rel_path = os.path.relpath(local_path, md_dir) if md_dir else local_path
-        placeholder = f"__IMG_{uuid.uuid4().hex}__"
-        placeholder_map[placeholder] = rel_path
         img.replace_with(
             soup.new_string(f"\n\n![图片]({rel_path})\n\n")
         )
 
     content_html = str(content_div)
     content_html = re.sub(r'<svg[^>]*>.*?</svg>', '', content_html, flags=re.DOTALL)
+
+    content_html = re.sub(r'<br\s*/?>', '\n', content_html)
+    content_html = re.sub(r'</p>', '\n\n', content_html)
+    content_html = re.sub(r'</div>', '\n\n', content_html)
+    content_html = re.sub(r'</section>', '\n\n', content_html)
+    content_html = re.sub(r'</h([1-6])>', '\n\n', content_html)
+    content_html = re.sub(r'</blockquote>', '\n\n', content_html)
+    content_html = re.sub(r'</li>', '\n', content_html)
+    content_html = re.sub(r'</tr>', '\n', content_html)
+
     content_text = re.sub(r'<[^>]+>', '', content_html)
     content_text = re.sub(r'\n{3,}', '\n\n', content_text)
     content_text = re.sub(r'&nbsp;', ' ', content_text)
@@ -234,12 +239,14 @@ def main():
     )
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
+    pub_date = meta.get("publish_date", "")
+    asset_subdir = pub_date[:10] if pub_date and len(pub_date) >= 10 else datetime.now().strftime("%Y-%m-%d")
+
     if args.assets_dir:
         assets_dir = args.assets_dir
     else:
         assets_dir = os.path.join(
-            os.path.dirname(file_path), DEFAULT_ASSETS_DIR_NAME,
-            os.path.splitext(os.path.basename(file_path))[0]
+            os.path.dirname(file_path), DEFAULT_ASSETS_DIR_NAME, asset_subdir
         )
 
     meta["assets_dir"] = assets_dir
