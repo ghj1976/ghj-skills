@@ -16,6 +16,7 @@ from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
+from html_to_markdown import convert, ConversionOptions
 
 WECHAT_UA = (
     "Mozilla/5.0 (Linux; Android 13; V2148A) AppleWebKit/537.36 "
@@ -114,42 +115,32 @@ def extract_content(html: str, assets_dir: str, md_file_path: str) -> str:
         src = src.replace("&amp;", "&")
         local_path = download_image(src, assets_dir)
         rel_path = os.path.relpath(local_path, md_dir) if md_dir else local_path
-        img.replace_with(
-            soup.new_string(f"\n\n![图片]({rel_path})\n\n")
-        )
+        img["src"] = rel_path
+        img["alt"] = "图片"
+        if "data-src" in img.attrs:
+            del img.attrs["data-src"]
 
     content_html = str(content_div)
     content_html = re.sub(r'<svg[^>]*>.*?</svg>', '', content_html, flags=re.DOTALL)
 
-    content_html = re.sub(r'<br\s*/?>', '\n', content_html)
-    content_html = re.sub(r'</p>', '\n\n', content_html)
-    content_html = re.sub(r'</div>', '\n\n', content_html)
-    content_html = re.sub(r'</section>', '\n\n', content_html)
-    content_html = re.sub(r'</h([1-6])>', '\n\n', content_html)
-    content_html = re.sub(r'</blockquote>', '\n\n', content_html)
-    content_html = re.sub(r'</li>', '\n', content_html)
-    content_html = re.sub(r'</tr>', '\n', content_html)
+    options = ConversionOptions(
+        heading_style='atx',
+        skip_images=False,
+        autolinks=True,
+    )
+    result = convert(content_html, options=options)
+    markdown = result.content
 
-    content_text = re.sub(r'<[^>]+>', '', content_html)
-    content_text = re.sub(r'\n{3,}', '\n\n', content_text)
-    content_text = re.sub(r'&nbsp;', ' ', content_text)
-    content_text = re.sub(r'&amp;', '&', content_text)
-    content_text = re.sub(r'&lt;', '<', content_text)
-    content_text = re.sub(r'&gt;', '>', content_text)
-    content_text = re.sub(r'&quot;', '"', content_text)
-    content_text = re.sub(r'&#39;', "'", content_text)
+    markdown = re.sub(r'&nbsp;', ' ', markdown)
+    markdown = re.sub(r'&amp;', '&', markdown)
+    markdown = re.sub(r'&lt;', '<', markdown)
+    markdown = re.sub(r'&gt;', '>', markdown)
+    markdown = re.sub(r'&quot;', '"', markdown)
+    markdown = re.sub(r'&#39;', "'", markdown)
 
-    lines = content_text.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped:
-            cleaned_lines.append(stripped)
-        else:
-            if cleaned_lines and cleaned_lines[-1] != '':
-                cleaned_lines.append('')
+    markdown = re.sub(r'\n{4,}', '\n\n\n', markdown)
 
-    return '\n'.join(cleaned_lines).strip()
+    return markdown.strip()
 
 
 def download_image(url: str, assets_dir: str) -> str:
