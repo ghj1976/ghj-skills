@@ -1,13 +1,15 @@
 ---
 name: wechat-obsidian-archive
-description: Use when the user asks to archive, save, or backup a WeChat public account (公众号) article link to Obsidian
+description: Use when the user asks to archive, save, or backup a WeChat public account (公众号) article link
 ---
 
-# 公众号文章一键存档到 Obsidian
+# 公众号文章一键存档
 
 ## 概述
 
-将公众号文章链接一键存档为 Obsidian Markdown 文件，包含标题、作者、发布时间、完整正文（含图片）和自动生成的阅读笔记。
+将公众号文章链接一键存档为 Markdown 文件，包含标题、作者、发布时间、完整正文（含图片）和自动生成的阅读笔记。
+
+**默认保存到项目当前目录**（即 AI 的工作目录），按 `{年份}/{作者}/` 组织，图片保存在同级的 `assets/{日期}/` 下。也可指定 `--output-dir "~/参考资料库/公众号文章"` 存档到 Obsidian 目录。
 
 ## 使用流程
 
@@ -15,24 +17,26 @@ description: Use when the user asks to archive, save, or backup a WeChat public 
 2. 运行 Python 脚本抓取并解析文章，JSON 输出保存到文件
 3. 读取 JSON 中的 `content`（图片已是本地路径，勿重复下载）
 4. 生成阅读笔记（核心观点、金句、思考）
-5. 用 Python 写入最终的 Obsidian Markdown 文件
+5. 用 Python 写入最终的 Markdown 文件
 6. 告知用户文件路径
 
 ## 步骤
 
 ### 1. 运行抓取脚本，保存 JSON 输出
 
-```bash
-python .opencode/skills/wechat-obsidian-archive/scripts/archive-wechat.py \
-  "<文章链接>" \
-  --output-dir "~/参考资料库/公众号文章" \
+默认保存到项目当前目录：
+```powershell
+$env:PYTHONIOENCODING='utf-8'
+python <skill_base_dir>/scripts/archive-wechat.py `
+  "<文章链接>" `
+  --output-dir "." `
   > output.json
 ```
 
-**Windows 用户注意：** 先设置环境变量 `$env:PYTHONIOENCODING='utf-8'`，否则 `print(json.dumps(...))` 会因 gbk 编码报错：
+如需存档到 Obsidian，改为：
 ```powershell
 $env:PYTHONIOENCODING='utf-8'
-python .opencode/skills/wechat-obsidian-archive/scripts/archive-wechat.py `
+python <skill_base_dir>/scripts/archive-wechat.py `
   "<文章链接>" `
   --output-dir "~/参考资料库/公众号文章" `
   > output.json
@@ -122,7 +126,7 @@ with open(file_path, "w", encoding="utf-8") as f:
 print(f"Saved: {file_path}")
 ```
 
-最终文件结构：
+最终文件结构（示例）：
 
 ```markdown
 ---
@@ -166,12 +170,6 @@ tags: [公众号存档]
 
 告知用户文件已保存到的路径。
 
-## 注意事项
-
-- 首次使用需安装依赖：`pip install -r .opencode/skills/wechat-obsidian-archive/scripts/requirements.txt`
-- 需要 `curl` 命令可用。**Windows 必须用 `curl.exe`**（PowerShell 的 `curl` 别名指向 `Invoke-WebRequest`，不是真正的 curl）
-- 如果 `.opencode/skills/` 找不到，说明用户没有运行项目根目录，先定位项目目录
-
 ### 关键陷阱：勿重新下载图片
 
 脚本返回的 `content` 中，图片路径已经是相对于 markdown 文件的**相对路径**（如 `assets/2026-06-18/abc.jpg`），写入文件时**直接使用即可**。
@@ -183,11 +181,11 @@ tags: [公众号存档]
 
 ### 路径说明
 
-| 路径 | 格式 | 示例 |
-|------|------|------|
-| `file_path` | 绝对路径（已展开 `~`） | `C:\Users\郭红俊\参考资料库\...\file.md` |
-| `assets_dir` | 绝对路径（已展开 `~`） | `C:\Users\郭红俊\参考资料库\...\assets\date\` |
-| content 中图片路径 | 相对于 `file_path` 所在目录 | `assets\2026-06-18\abc.jpg` |
+| 路径 | 格式 | 示例（项目目录） | 示例（Obsidian） |
+|------|------|---|---|
+| `file_path` | 绝对路径（已展开 `~`） | `E:\mycode\project\2026年\作者\file.md` | `C:\Users\郭红俊\参考资料库\...\file.md` |
+| `assets_dir` | 绝对路径（已展开 `~`） | `E:\mycode\project\2026年\作者\assets\2026-06-11\` | `C:\Users\郭红俊\参考资料库\...\assets\date\` |
+| content 中图片路径 | 相对于 `file_path` 所在目录 | `assets\2026-06-11\abc.jpg` | `assets\2026-06-18\abc.jpg` |
 
 图片路径在写入 markdown 前建议将 `\` 转为 `/` 以确保跨平台兼容：
 ```python
