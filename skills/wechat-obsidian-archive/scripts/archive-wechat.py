@@ -12,11 +12,20 @@ import subprocess
 import sys
 import uuid
 from datetime import datetime
-from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
 from html_to_markdown import convert, ConversionOptions
+
+# ── Windows 编码兼容 ──────────────────────────────────────────────
+if sys.platform == "win32":
+    # PYTHONUTF8=1 未设置时强制 reconfigure，确保 pipe 重定向不乱码
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except AttributeError:
+        pass  # Python < 3.7 不支持 reconfigure
+# ───────────────────────────────────────────────────────────────────
 
 WECHAT_UA = (
     "Mozilla/5.0 (Linux; Android 13; V2148A) AppleWebKit/537.36 "
@@ -115,6 +124,7 @@ def extract_content(html: str, assets_dir: str, md_file_path: str) -> str:
         src = src.replace("&amp;", "&")
         local_path = download_image(src, assets_dir)
         rel_path = os.path.relpath(local_path, md_dir) if md_dir else local_path
+        rel_path = rel_path.replace(os.sep, "/")
         img["src"] = rel_path
         img["alt"] = "图片"
         if "data-src" in img.attrs:
@@ -210,10 +220,16 @@ def format_yaml_frontmatter(meta: dict) -> str:
 def main():
     parser = argparse.ArgumentParser(description="抓取公众号文章")
     parser.add_argument("url", help="公众号文章链接")
-    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--assets-dir", default=None)
+    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR,
+                        help="Markdown 文件输出目录（默认 ~/参考资料库/公众号文章）")
+    parser.add_argument("--assets-dir", default=None,
+                        help="图片存放目录（默认 <output-dir>/assets/<日期>）")
+    parser.add_argument("--output-json", default=None,
+                        help="将结构化数据写入此 JSON 文件（而非 stdout），可避免 Windows pipe 编码问题")
     args = parser.parse_args()
     args.output_dir = os.path.expanduser(args.output_dir)
+    if args.output_json:
+        args.output_json = os.path.abspath(os.path.expanduser(args.output_json))
 
     print(f"[INFO] 正在抓取: {args.url}", file=sys.stderr)
     html = fetch_page(args.url)
@@ -254,7 +270,14 @@ def main():
         "assets_dir": os.path.normpath(assets_dir),
     }
 
-    print(json.dumps(output, ensure_ascii=False))
+    output_json_str = json.dumps(output, ensure_ascii=False, indent=2)
+
+    if args.output_json:
+        with open(args.output_json, "w", encoding="utf-8") as f:
+            f.write(output_json_str)
+        print(f"[OK] 结构化数据已写入: {args.output_json}", file=sys.stderr)
+    else:
+        print(output_json_str)
 
 
 if __name__ == "__main__":

@@ -14,32 +14,56 @@ description: Use when the user asks to archive, save, or backup a WeChat public 
 ## 使用流程
 
 1. 用户提供公众号文章链接
-2. 运行 Python 脚本抓取并解析文章，JSON 输出保存到文件
-3. 读取 JSON 中的 `content`（图片已是本地路径，勿重复下载）
-4. 生成阅读笔记（核心观点、金句、思考）
-5. 用 Python 写入最终的 Markdown 文件
-6. 告知用户文件路径
+2. 确定 Python 路径，安装依赖（如有缺失）
+3. 运行 Python 脚本抓取并解析文章，**用 `--output-json` 参数直接写到 JSON 文件**
+4. 读取 JSON 中的 `content`（图片已是本地路径，勿重复下载）
+5. 生成阅读笔记（核心观点、金句、思考）
+6. 用 Python 写入最终的 Markdown 文件
+7. 清理临时文件（`output.json`）
+8. 告知用户文件路径
 
 ## 步骤
 
+### 0. 确定 Python 路径（避免环境歧义）
+
+用户的 `python` 命令可能指向虚拟环境（如 hermes-agent venv），没有安装依赖。
+**务必使用系统 Python 或明确指定路径：**
+
+```powershell
+# 方法 A：使用系统 Python（推荐）
+$python = "C:\Users\郭红俊\AppData\Local\Programs\Python\Python314\python.exe"
+
+# 方法 B：如果 python 命令可用，先验证依赖
+python -c "import bs4, requests, html_to_markdown" 2>$null
+if ($LASTEXITCODE -ne 0) { pip install beautifulsoup4 lxml html-to-markdown requests }
+$python = "python"
+```
+
+依赖检查（如遇缺失则安装）：
+```powershell
+pip install beautifulsoup4 lxml html-to-markdown requests
+```
+
 ### 1. 运行抓取脚本，保存 JSON 输出
+
+**使用 `--output-json` 参数直接写文件（避免 pipe 重定向编码问题）：**
 
 默认保存到项目当前目录：
 ```powershell
-$env:PYTHONIOENCODING='utf-8'
-python <skill_base_dir>/scripts/archive-wechat.py `
+$env:PYTHONUTF8=1
+& $python <skill_base_dir>/scripts/archive-wechat.py `
   "<文章链接>" `
   --output-dir "." `
-  > output.json
+  --output-json "output.json"
 ```
 
-如需存档到 Obsidian，改为：
+如需存档到 Obsidian：
 ```powershell
-$env:PYTHONIOENCODING='utf-8'
-python <skill_base_dir>/scripts/archive-wechat.py `
+$env:PYTHONUTF8=1
+& $python <skill_base_dir>/scripts/archive-wechat.py `
   "<文章链接>" `
   --output-dir "~/参考资料库/公众号文章" `
-  > output.json
+  --output-json "output.json"
 ```
 
 脚本输出的 JSON 包含以下字段，**必须保存到文件**（后续步骤需要反复读取）：
@@ -47,7 +71,7 @@ python <skill_base_dir>/scripts/archive-wechat.py `
 | 字段 | 说明 |
 |------|------|
 | `meta` | 标题、作者、发布时间、URL |
-| `content` | **正文 Markdown，图片路径为相对于 `file_path` 的相对路径** |
+| `content` | **正文 Markdown，图片路径为相对于 `file_path` 的相对路径（已转为 `/`）** |
 | `file_path` | 文件将要保存的绝对路径（已展开 `~`） |
 | `assets_dir` | 图片存放目录的绝对路径（已展开 `~`） |
 
@@ -83,7 +107,7 @@ with open("output.json", "r", encoding="utf-8") as f:
     data = json.load(f)
 
 meta = data["meta"]
-content = data["content"]  # 图片是相对路径（如 assets/2026-06-18/abc.jpg），直接使用
+content = data["content"]  # 图片是相对路径（如 assets/2026-06-18/abc.jpg），已用 /，直接使用
 file_path = data["file_path"]  # 已展开为绝对路径
 
 frontmatter = f"""---
@@ -117,7 +141,7 @@ thinking = """
 - ...
 """
 
-full_md = frontmatter + reading_notes + "## 正文\n\n" + content + thinking
+full_md = frontmatter + reading_notes + "\n## 正文\n\n" + content + thinking
 
 os.makedirs(os.path.dirname(file_path), exist_ok=True)
 with open(file_path, "w", encoding="utf-8") as f:
@@ -185,23 +209,27 @@ tags: [公众号存档]
 |------|------|---|---|
 | `file_path` | 绝对路径（已展开 `~`） | `E:\mycode\project\2026年\作者\file.md` | `C:\Users\郭红俊\参考资料库\...\file.md` |
 | `assets_dir` | 绝对路径（已展开 `~`） | `E:\mycode\project\2026年\作者\assets\2026-06-11\` | `C:\Users\郭红俊\参考资料库\...\assets\date\` |
-| content 中图片路径 | 相对于 `file_path` 所在目录 | `assets\2026-06-11\abc.jpg` | `assets\2026-06-18\abc.jpg` |
+| content 中图片路径 | 相对于 `file_path` 所在目录（**已用 `/`**） | `assets/2026-06-11/abc.jpg` | `assets/2026-06-18/abc.jpg` |
 
-图片路径在写入 markdown 前建议将 `\` 转为 `/` 以确保跨平台兼容：
+脚本已自动处理 `\` → `/` 转换，无需额外操作。
+
+### Windows 编码问题（脚本已内置修复）
+
+脚本已在 `archive-wechat.py` 开头加入以下兼容代码：
+
 ```python
-import re
-content = re.sub(r'!\[图片\]\(([^)]+)\)', lambda m: f"![图片]({m.group(1).replace(chr(92), '/')})", content)
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 ```
 
-### Windows 编码问题
+同时建议运行前设置 `$env:PYTHONUTF8=1` 作为双重保障。
 
-此脚本在 Windows 上可能遇到编码问题，原因如下：
-
-| 问题 | 表现 | 解决方法 |
+| 问题 | 表现 | 修复方式 |
 |------|------|----------|
-| `subprocess.run` 捕获 curl 输出 | `UnicodeDecodeError: 'gbk' codec can't decode byte` | 脚本已内置 `encoding='utf-8'` 参数，无需额外操作 |
-| `print(json.dumps(...))` 输出 JSON | `UnicodeEncodeError: 'gbk' codec can't encode character` | 运行前设置 `$env:PYTHONIOENCODING='utf-8'` |
-| 写入最终 Markdown 文件 | 包含中文的 markdown 内容 | 使用 Python（而非 PowerShell）写文件，指定 `encoding='utf-8'` |
+| pipe 重定向时 `print(json.dumps(...))` 乱码 | `gbk` 编码错误或中文变乱码 | 使用 `--output-json` 参数直接写文件（**推荐**） |
+| `subprocess.run` 捕获 curl 输出 | `UnicodeDecodeError` | 脚本已内置 `encoding='utf-8'`，无需额外操作 |
+| 写入最终 Markdown 文件 | 中文乱码 | 使用 Python `encoding='utf-8'` 写入 |
 
 ### 写入最终 Markdown 文件
 
