@@ -95,3 +95,7 @@ mklink /d "D:\test\wxds\.opencode\skills" "E:\mycode\ghj-skills\skills"
 
 ```
 
+
+## 语言约定
+
+同等条件下优先中文：skill 的 `description`、`SKILL.md`、`references/` 说明、字幕与口播都用中文；代码、命令、字段名保持原文。英文只在术语、命令或外部 API 必须时保留。
