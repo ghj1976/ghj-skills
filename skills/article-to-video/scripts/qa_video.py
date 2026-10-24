@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Automated QA for the rendered video.
+"""成片自动 QA。
 
-Checks: specs, CFR PTS, clean decode, frozen frames around cuts, loudness.
-Usage: python qa_video.py path/to/video.mp4 [--times 9.5,49,175]
+检查：规格、CFR PTS、完整解码、切点附近冻结帧、响度。
+用法：python qa_video.py path/to/video.mp4 [--times 9.5,49,175]
 """
 import argparse
 import csv

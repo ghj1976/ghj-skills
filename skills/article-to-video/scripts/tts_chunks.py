@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Generate 3–4 long-form chunks with VoxCPM2.
+"""用 VoxCPM2 生成 2–4 个长段。
 
-Why long chunks: per-sentence cloning drifts the speaker (measured 71–154 Hz
-across beats). Four chunks with one prompt/reference stay at 98–103 Hz.
+为什么用长段：逐句克隆会让说话人漂移（实测各 beat 基频 71–154Hz）；
+同一 prompt/reference 的 4 个长段稳定在 98–103Hz。
 """
 import argparse
 import json
@@ -28,14 +28,14 @@ STEPS = int(os.environ.get("VOX_STEPS", "10"))
 SEED = int(os.environ.get("VOX_SEED", "20"))
 CFG = float(os.environ.get("VOX_CFG", "2.0"))
 GROUPS = [(i, min(i + 1, len(script_data.SCENES) - 1))
-          for i in range(0, len(script_data.SCENES), 2)]   # 2 scenes per chunk
+          for i in range(0, len(script_data.SCENES), 2)]   # 每段 2 个场景
 try:
     from project_config import EXCLUDE
 except ImportError:
     EXCLUDE = set()
 
 PROMPT = str(AUD / "prompt_ref.wav")
-# Exact transcript of prompt_ref.wav — required for prompt/continuation mode.
+# prompt_ref.wav 的准确文本，prompt/续写模式必需。
 PROMPT_TEXT = "这不是段子。是一份 AI 安全报告里的真事。"
 
 
@@ -52,12 +52,12 @@ def main():
     ap.add_argument("--of", type=int, default=2)
     a = ap.parse_args()
     if not Path(PROMPT).exists():
-        raise SystemExit(f"missing {PROMPT}: provide a 4–8 s known-transcript voice sample")
+        raise SystemExit(f"缺少 {PROMPT}：请提供 4–8 秒、文本已知的音色样本")
 
     model = VoxCPM.from_pretrained(MODEL, load_denoiser=False, optimize=False, device="cuda")
     cache = model.tts_model.build_prompt_cache(
         prompt_text=PROMPT_TEXT, prompt_wav_path=PROMPT, reference_wav_path=PROMPT)
-    print("model loaded", flush=True)
+    print("模型已加载", flush=True)
 
     for gi in range(len(GROUPS)):
         if gi % a.of != a.part:
@@ -65,7 +65,7 @@ def main():
         text = chunk_text(gi)
         out = AUD / f"chunk_{gi}.wav"
         if out.exists():
-            print("skip", gi, flush=True)
+            print("跳过", gi, flush=True)
             continue
         t = time.time()
         torch.manual_seed(SEED)

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Locate ffmpeg/ffprobe without relying on %USERNAME% (mojibake under WSL)."""
+"""定位 ffmpeg/ffprobe，不依赖 %USERNAME%（WSL 下可能乱码）。"""
 import glob
 import os
 import shutil

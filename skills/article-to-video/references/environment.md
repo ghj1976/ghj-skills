@@ -1,20 +1,20 @@
-# Environment setup (Windows + WSL)
+# 环境搭建（Windows + WSL）
 
-The reference pipeline was built on Windows 11 with WSL, an RTX 5080 Laptop
-(16 GB), Python 3.13, and ffmpeg from WinGet. Commands can be launched from WSL
-by calling the Windows interpreter directly, e.g.
-`/mnt/d/project/.venv-tts/Scripts/python.exe D:\project\script.py`.
+参考流程跑在 Windows 11 + WSL、RTX 5080 Laptop（16GB）、Python 3.13、WinGet 安装的 ffmpeg 上。可以从 WSL 直接调用 Windows 解释器，例如：
+
+```bash
+/mnt/d/project/.venv-tts/Scripts/python.exe D:\project\script.py
+```
 
 ## Python / VoxCPM
 
-The system Python may have a CPU-only torch build. Check:
+系统 Python 可能是 CPU 版 torch。先检查：
 
 ```bash
 python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 ```
 
-If it prints `+cpu` / `False`, create an isolated venv that inherits the
-installed `voxcpm` and adds CUDA torch:
+如果输出 `+cpu` / `False`，建一个继承已安装 `voxcpm` 的隔离 venv，补 CUDA torch：
 
 ```bash
 python -m venv --system-site-packages .venv-tts
@@ -24,60 +24,48 @@ python -m venv --system-site-packages .venv-tts
 .venv-tts/Scripts/python.exe -c "import torch; print(torch.cuda.is_available())"
 ```
 
-- The default PyTorch index can be very slow; the SJTU mirror was ~15 MB/s.
-- Do not `pip install` into the system Python for this; keep the venv local.
-- VoxCPM model cache: `~/.cache/huggingface/hub/models--openbmb--VoxCPM2` (about 4 GB).
-- Two inference processes fit in ~14 GB VRAM. Do not launch 3.
-- The pip package may be older than the GitHub README; inspect the actual
-  `generate` / `build_prompt_cache` signatures before adding `seed`.
+- 默认 PyTorch 源可能很慢；SJTU 镜像实测约 15MB/s。
+- 不要为此往系统 Python 里 `pip install`；venv 放项目本地。
+- VoxCPM 模型缓存：`~/.cache/huggingface/hub/models--openbmb--VoxCPM2`，约 4GB。
+- 两个推理进程约占 14GB 显存，不要开 3 个。
+- pip 包可能比 GitHub README 旧；加 `seed` 前先看真实的 `generate` / `build_prompt_cache` 签名。
 
 ## ffmpeg / ffprobe
 
-WinGet install path:
+WinGet 安装路径：
 
 ```
 C:\Users\<user>\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin\ffmpeg.exe
 ```
 
-`ffprobe.exe` sits beside it. The scripts read `FFMPEG` from the environment and
-derive `FFPROBE` from it. FFmpeg 9 removed `-vsync`; use `-fps_mode passthrough`.
+`ffprobe.exe` 在同目录。脚本通过 `ffmpeg_path.py` 自动查找（`FFMPEG`/`FFPROBE` 环境变量优先，然后 PATH，再 glob WinGet 目录），这样不依赖 `%USERNAME%`——从 WSL 启动 Windows Python 时该变量可能乱码。FFmpeg 9 移除了 `-vsync`，用 `-fps_mode passthrough`。
 
-## Fonts
+## 字体
 
-WSL often has no CJK fonts (`fc-list :lang=zh` empty). Render with the Windows
-Python and the Windows font files:
+WSL 通常没有中文字体（`fc-list :lang=zh` 为空）。用 Windows Python + Windows 字体文件渲染：
 
 ```
 C:\Windows\Fonts\Noto Sans SC Bold (TrueType).otf
 C:\Windows\Fonts\Noto Sans SC Medium (TrueType).otf
 ```
 
-Pillow can load `.otf` paths with spaces directly. Do not rely on fontconfig.
+Pillow 可以直接加载带空格的 `.otf` 路径。不要依赖 fontconfig。
 
-## ASR (faster-whisper)
+## ASR（faster-whisper）
 
 ```bash
 .venv-tts/Scripts/python.exe -m pip install faster-whisper
 ```
 
-The `small` model downloads on first use (~460 MB). Use CPU `int8`:
-CUDA may fail with `Library cublas64_12.dll is not found`; CPU is sufficient for
-a 3-minute narration and avoids CUDA-DLL PATH surgery. Always resample to 16 kHz
-before `transcribe` (see pitfalls).
+`small` 模型首次使用会下载（约 460MB）。用 CPU `int8`：CUDA 可能报 `Library cublas64_12.dll is not found`；3 分钟口播用 CPU 足够，也省去修 CUDA DLL PATH。`transcribe` 前一定重采样到 16kHz（见踩坑文档）。
 
-## Python packages used by the scripts
+## 脚本用到的 Python 包
 
-`numpy`, `soundfile`, `scipy`, `librosa`, `Pillow`, `torch`, `voxcpm`,
-`faster-whisper`. The system Python already had Pillow/numpy/scipy/librosa from
-the VoxCPM install; the venv inherits them.
+`numpy`、`soundfile`、`scipy`、`librosa`、`Pillow`、`torch`、`voxcpm`、`faster-whisper`。系统 Python 通常已随 VoxCPM 装了 Pillow/numpy/scipy/librosa，venv 会继承。
 
-## Path and encoding notes
+## 路径与编码注意事项
 
-- Chinese usernames are fine in Python `subprocess`; they may look garbled in
-  `ls`/`tasklist` output but resolve correctly.
-- Pass Windows paths as raw strings (`r"D:\project\out"`); do not use `cd` with
-  Windows-style paths inside WSL.
-- The working directory and the DSH checkout are unrelated; never infer paths
-  from the checkout location.
-- Disk: a 3-minute 1080×1920 CRF 18–20 video is ~40–60 MB; intermediates
-  (narration/music/SFX stems) add ~100 MB.
+- Python `subprocess` 能处理中文用户名；`ls`/`tasklist` 里可能显示乱码，但路径本身能解析。
+- Windows 路径用原始字符串传（`r"D:\project\out"`）；不要在 WSL 里 `cd` 到 Windows 风格路径。
+- 当前工作目录和 DSH checkout 无关；不要从 checkout 位置推断项目路径。
+- 磁盘：3 分钟、1080×1920、CRF 18–20 的成片约 40–60MB；中间文件（口播/音乐/音效分轨）再加约 100MB。

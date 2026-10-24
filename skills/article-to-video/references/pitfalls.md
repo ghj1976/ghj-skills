@@ -1,124 +1,81 @@
-# Pitfalls and measured evidence
+# 踩坑与实测数据
 
-These are the failures that caused real re-cuts. The numbers are from the
-AI-article project; treat them as expected orders of magnitude, not constants.
+下面这些问题都真实导致过重做。数字来自“AI 查公园”项目，按数量级理解，不要当成固定常量。
 
-## 1. Per-sentence voice cloning changes the speaker
+## 1. 逐句克隆会换说话人
 
-**Symptom:** "声音时好时不好" — one line is deep and calm, the next is brighter
-and faster, as if another person read it.
+**现象：**“声音时好时不好”——上一句低沉平稳，下一句突然变亮变快，像换了一个人。
 
-**Measurement:** 45 independently generated beats had median f0 from **71 Hz to
-154 Hz**. Four long chunks generated with the same prompt/reference measured
-**100 / 103 / 100 / 98 Hz**. The chunk medians were consistent; the beat medians
-were not.
+**实测：** 45 个独立生成的 beat，基频中位数从 **71Hz 到 154Hz**；同一 prompt/reference 生成的 4 个长段是 **100 / 103 / 100 / 98Hz**。长段之间很稳，逐句不稳定。
 
-**Cause:** zero-shot cloning samples speaker characteristics at the start of each
-generation. Short texts and different punctuation give the model more freedom.
+**原因：** 零样本克隆会在每次生成开始时重新采样说话人特征。文本短、标点不同，模型自由度更大。
 
-**Fix:** generate 3–4 long chunks (30–60 s each), same prompt cache, same seed,
-same `inference_timesteps=10`. Do not regenerate each beat. Measure each chunk
-with `librosa.pyin(fmin=60, fmax=350)`; reject outside 85–115 Hz.
+**修法：** 生成 3–4 个长段（每段 30–60 秒），同一 prompt cache、同一 seed、`inference_timesteps=10`。不要逐句重生成。用 `librosa.pyin(fmin=60, fmax=350)` 测每段，超出 85–115Hz 就重生成。
 
-## 2. Fast, high-pitched voice feels untrustworthy
+## 2. 语速快、音调高会显得不可信
 
-**Symptom:** "语速太快了，让人感觉不信任."
+**现象：**“语速太快了，让人感觉不信任。”
 
-**Measurement:** the first cut was **7.8 chars/s** (1667 chars in 217 s of
-speech) and f0 ≈ 171 Hz. The accepted cut is **5.2–5.6 chars/s**, f0 ≈ 95–105 Hz.
+**实测：** 第一版 **7.8 字/秒**（1667 字、217 秒口播），基频约 171Hz；最终版 **5.2–5.6 字/秒**，基频约 95–105Hz。
 
-**Fix:** low-pitch prompt/reference, calm known-transcript sample, target
-5.2–5.8 chars/s. If a few lines are still >7 chars/s, apply a mild per-beat
-`atempo` (0.85–0.95), never a pitch shift. Do not slow the whole mix with
-`atempo=0.8`; it makes the pauses unnatural.
+**修法：** 低音 prompt/reference，文本已知、语气平稳，目标 5.2–5.8 字/秒。个别句仍超过 7 字/秒，就对该 beat 做轻微 `atempo`（0.85–0.95），绝不做变调。不要给整条混音加 `atempo=0.8`，停顿会变得不自然。
 
-## 3. Cutting long-form audio per sentence loses words
+## 3. 按句切长段音频会丢字
 
-**Symptom:** "话没说完，就切成另外一个了。感觉丢了段声音."
+**现象：**“话没说完，就切成另外一个了。感觉丢了段声音。”
 
-**Measurement:** the sentence "它连轴转了十一天" occupied 1.5 s of audio. The
-per-beat splitter gave it **1.08 s** because it cut at a nearby RMS minimum,
-removing the last ~0.5 s.
+**实测：**“它连轴转了十一天”实际占 1.5 秒；逐句切分只给了 **1.08 秒**，因为它切在附近的 RMS 最低点，把最后约 0.5 秒切掉了。
 
-**Cause:** a min-energy point is not necessarily a sentence end. Cutting and
-reassembling per-beat clips also adds artificial gaps and can move the tail into
-the next clip.
+**原因：** 能量最低点不一定是句尾；切完再拼接还会引入人为空隙，并可能把尾音挪到下一段开头。
 
-**Fix:** never cut the long-form audio. Concatenate the chunks with gaps and use
-ASR only for **timing**. The narration remains continuous; the worst case is a
-caption arriving slightly early/late, never a missing word.
+**修法：** 长段音频绝不切。段与段之间留空隙，ASR 只用来定**时间**。口播保持连续，最坏情况是字幕早/晚一点，绝不会少一个字。
 
-## 4. ASR alignment: boundary must be the next sentence onset
+## 4. ASR 对齐：切点必须是下一句开口
 
-**Symptom:** the previous sentence is still audible when the image/caption
-changes, or the caption appears before its audio.
+**现象：** 画面/字幕已经切了，上一句还能听见；或者字幕先出现、声音后到。
 
-**Fix:** for each beat, find the first matched transcript word; set the boundary
-to the **start of the first word of the next beat**. That is the definition of
-"the next sentence has started." Do not cut at the middle of a pause, and do not
-use char proportion alone (it drifts when the TTS speeds up or slows down).
+**修法：** 每个 beat 找到第一个匹配上的转写词；边界取**下一个 beat 第一个词的开始时间**。这就是“下一句已经开口”。不要切在停顿中点，也不要只按字数比例（TTS 一快一慢就漂）。
 
-**Numbers:** ASR-aligned boundaries for the first chunk were
-`[0, 6.2, 8.54, 10.96, 13.9, 16.52, 20.6, 27.8, 32.74, 37.94]`. The cut at 9.54 s
-matched the next speech onset; the old cut at 7.67 s chopped the sentence.
+**实测：** 第一段的 ASR 对齐边界是 `[0, 6.2, 8.54, 10.96, 13.9, 16.52, 20.6, 27.8, 32.74, 37.94]`。9.54 秒的切点正好是下一句开口；旧的 7.67 秒切点把句子切断了。
 
-## 5. Whisper transcribes 48 kHz arrays as slow audio
+## 5. 把 48kHz 数组直接喂给 Whisper
 
-**Symptom:** faster-whisper returns English gibberish ("I said I don't know how")
-for Chinese speech, with timestamps beyond the clip duration.
+**现象：** faster-whisper 对中文语音输出英文乱码（“I said I don't know how”），时间戳还超过音频时长。
 
-**Cause:** faster-whisper assumes 16 kHz for numpy input. A 48 kHz array is
-interpreted as 16 kHz, i.e. 3× slower.
+**原因：** faster-whisper 对 numpy 输入默认按 16kHz 理解。48kHz 数组被当成 16kHz，等于慢放 3 倍。
 
-**Fix:** `librosa.resample(y, orig_sr=48000, target_sr=16000)` before
-`model.transcribe`. After that, the Chinese transcript was correct.
+**修法：** `librosa.resample(y, orig_sr=48000, target_sr=16000)` 之后再 `model.transcribe`。改完中文转写就正常了。
 
-## 6. ctranslate2 cannot find cuBLAS
+## 6. ctranslate2 找不到 cuBLAS
 
-**Symptom:** `RuntimeError: Library cublas64_12.dll is not found or cannot be loaded`.
+**现象：** `RuntimeError: Library cublas64_12.dll is not found or cannot be loaded`。
 
-**Fix:** run faster-whisper on CPU (`device="cpu", compute_type="int8"`); a 3-minute
-Chinese narration aligns in a couple of minutes. Alternatively prepend torch's
-`lib` directory to PATH, but CPU is less fragile.
+**修法：** 用 CPU 跑 faster-whisper（`device="cpu", compute_type="int8"`）；3 分钟中文口播一两分钟就能对齐。也可以把 torch 的 `lib` 目录加进 PATH，但 CPU 更省事。
 
-## 7. Stutter/freeze at image changes
+## 7. 图片切换时卡顿/冻结
 
-The final video had four compounding causes:
+最终版之前有四个叠加原因：
 
-1. **Clamped zoom during pauses.** `progress = min(1, lt / beat_duration)` and
-   `lt` exceeded the beat duration during the 0.34 s gap, so the image froze for
-   0.34 s, then the next shot jumped. Fix: use `next_beat.start - start` as the
-   visual duration and **linear** progress, no clamp until the cut.
-2. **Smoothstep easing.** `smoothstep` has zero velocity at t=0 and t=1, so
-   every shot started/ended with a near-static hold. Fix: linear or ease-out
-   with a non-zero end velocity.
-3. **Integer crop.** `int(2048/zoom)` changed every 2–3 frames, then jumped 1 px.
-   Fix: `Image.transform(..., AFFINE, (sx,0,x0,0,sy,y0))` with float values.
-4. **Crossfade double exposure.** Two big captions or illustrations blended for
-   0.2–0.3 s looked like a rendering glitch. Fix: hard cut; the whoosh covers it.
+1. **停顿期间推拉被 clamp。** `progress = min(1, lt / beat_duration)`，而 0.34 秒空隙里 `lt` 超过了 beat 时长，画面冻结 0.34 秒，然后下一镜头突然跳。修法：用 `next_beat.start - start` 作为视觉时长，**线性**推进，切点前不 clamp。
+2. **smoothstep 缓动。** `smoothstep` 在 t=0 和 t=1 速度为 0，每个镜头首尾都会近乎静止。修法：线性，或尾速度不为 0 的 ease-out。
+3. **整数裁切。** `int(2048/zoom)` 每 2–3 帧才变一次，然后跳 1px。修法：`Image.transform(..., AFFINE, (sx,0,x0,0,sy,y0))`，用浮点值。
+4. **叠化双影。** 两行大字或两张插画叠 0.2–0.3 秒，看起来像渲染故障。修法：硬切，用 whoosh 盖住。
 
-**Verification:** decode the MP4, take 36 frames around a cut, compute mean abs
-difference on 270×480 copies. Before the fix, 9–14 frames had diff < 0.02
-(visually identical) followed by a 26–74 spike. After: 0 zero frames.
+**验证：** 解码 MP4，在切点附近取 36 帧，缩到 270×480 后算平均绝对差。修之前有 9–14 帧 diff <0.02（肉眼一样），随后一个 26–74 的尖峰；修之后 0 个冻结帧。
 
-## 8. Static text cards are encoded as frozen frames
+## 8. 静止文字卡被编码成冻结帧
 
-Even with a slow whole-frame zoom, a 7.5 % change over an 18 s scene is
-~0.004 %/frame, often below the encoder's update threshold. A static text card
-then looks frozen for seconds.
+即使整帧缓慢推近，18 秒场景只放大 7.5%，平均每帧约 0.004%，经常低于编码器更新阈值。文字卡于是会静止好几秒。
 
-**Fix:** a slow whole-frame zoom plus a moving low-alpha light sweep on text/data
-layouts. Verify **decoded** frames, not source frames.
+**修法：** 文字/数据版式加整帧缓慢推近 + 低透明度移动光扫。验收要看**解码后**的帧，不要看源帧。
 
-## 9. Underline through the glyphs
+## 9. 下划线穿过字形
 
-**Symptom:** the orange line cuts through the bottom strokes of
-"一把钥匙" / "自己想办法".
+**现象：** 橙色线从“一把钥匙”“自己想办法”的底部笔画中间穿过去。
 
-**Cause:** CJK glyph ink extends below the em box; `y + font_size + 22` is not
-below the glyph.
+**原因：** 中文字形墨迹会超出 em 框，`y + font_size + 22` 并不在字形下方。
 
-**Fix:**
+**修法：**
 
 ```python
 bbox = d.textbbox((x, y), text, font=f)
@@ -126,30 +83,18 @@ line_y = bbox[3] + 16
 d.rectangle([x, line_y, x + width, line_y + 8], fill=accent)
 ```
 
-## 10. SFX clipping and loudness drift
+## 10. 音效削波与响度漂移
 
-The SFX track normalized to RMS 0.02 still had peaks at **1.0**, and the mix
-clipped. Fix: normalize SFX **peak** to 0.30, add `alimiter=limit=0.95` after
-`amix`, and check `ebur128` true peak. Target −16 LUFS, peak ≤ −1.5 dB.
+音效轨按 RMS 0.02 归一，峰值仍然到 **1.0**，混音直接削波。修法：音效按**峰值**归一到 0.30，`amix` 后加 `alimiter=limit=0.95`，再用 `ebur128` 查真峰值。目标 −16 LUFS，峰值 ≤ −1.5dB。
 
-## 11. CPU PyTorch smells like a VoxCPM bug
+## 11. CPU 版 PyTorch 看起来像 VoxCPM 的 bug
 
-The system Python had `torch 2.14.1+cpu`. VoxCPM worked, but 30 s of audio took
-20+ minutes (~40× realtime) and tool calls timed out. This is not a VoxCPM
-problem. Create a venv with `--system-site-packages` and install
-`torch/torchaudio +cu128`; generation drops to roughly realtime×0.3–2 on a
-desktop GPU.
+系统 Python 装的是 `torch 2.14.1+cpu`。VoxCPM 能跑，但 30 秒音频要 20 多分钟（约 40 倍实时），工具调用直接超时。这不是 VoxCPM 的问题。用 `--system-site-packages` 建 venv，补装 `torch/torchaudio +cu128`，桌面 GPU 上生成速度大约回到实时×0.3–2。
 
-## 12. Broken image links are the norm in exported articles
+## 12. 导出的文章图片链接通常是坏的
 
-Markdown often contains `assets/<title>/file-*.png`, while the images are in the
-article directory. Map by **article order**, then open each image and confirm it
-matches the paragraph. Do not rely on the filename alone, and do not silently
-drop an image.
+Markdown 里常见 `assets/<标题>/file-*.png`，实际图片在文章目录。按**文章出现顺序**映射，然后逐张打开确认和段落对得上。不要只看文件名，也不要悄悄丢掉一张图。
 
-## 13. 16:9 vs 9:16
+## 13. 16:9 还是 9:16
 
-A 16:9 first cut was rejected for phone viewing. 1080×1920 is the default for
-mobile platforms; 16:9 remains only for embedded players or explicit requests.
-Keep the old cut in a separate folder — the user explicitly asked for side-by-side
-comparison.
+第一版 16:9 在手机上被否。手机平台默认 1080×1920；16:9 只用于文章内嵌播放器或用户明确要求。旧版本单独放一个目录——用户明确说要并排对比。

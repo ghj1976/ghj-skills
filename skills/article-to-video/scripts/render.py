@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Vertical 1080x1920 mobile cut: kinetic typography, blurred stills, 30fps."""
+"""1080×1920 竖屏：动态大字、模糊底图、30fps。"""
 import bisect
 import json
 import os
@@ -26,7 +26,7 @@ FFMPEG = _ffmpeg()
 FONT_BOLD = os.environ.get("FONT_BOLD", r"C:\Windows\Fonts\Noto Sans SC Bold (TrueType).otf")
 FONT_MED = os.environ.get("FONT_MED", r"C:\Windows\Fonts\Noto Sans SC Medium (TrueType).otf")
 
-# --- project copy: edit these for each video ---
+# --- 项目副本：每条视频改这里 ---
 BRAND = os.environ.get("VIDEO_BRAND", "AI 失控 11 天")
 TITLE_MAIN = os.environ.get("VIDEO_TITLE", "AI 失控 11 天")
 TITLE_SUB = os.environ.get("VIDEO_SUBTITLE", "不毁灭世界，只想查清哪个门人多")

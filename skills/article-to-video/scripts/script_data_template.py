@@ -1,25 +1,25 @@
 # -*- coding: utf-8 -*-
-"""Storyboard contract for the video pipeline.
+"""视频流程的分镜契约。
 
-Copy to the project as `script_data.py` and replace the example content.
-`flatten()` must return dicts with:
+复制到项目里改名为 `script_data.py`，替换示例内容。
+`flatten()` 必须返回包含以下字段的 dict：
   id, scene, text, sub, big, layout, accent, eyebrow, img
 """
 
 IMG = {
-    "cover": "file-20260101000000000.png",   # local image beside the article
+    "cover": "file-20260101000000000.png",   # 文章同目录下的本地图片
     "detail": "file-20260101000000001.png",
 }
 
 SCENES = [
     {
         "id": "hook",
-        "label": "00 / 开场",          # shown at top-left
+        "label": "00 / 开场",          # 显示在左上角
         "kind": "hook",
         "default_img": IMG["cover"],
-        "beat_imgs": [IMG["cover"], IMG["detail"]],   # optional per-beat override
+        "beat_imgs": [IMG["cover"], IMG["detail"]],   # 可选：单 beat 覆盖图片
         "beats": [
-            # (spoken text, subtitle, big keyword, layout, accent, eyebrow)
+            # (口播, 字幕, 画面大字, 版式, 主色, 小标签)
             ("一个 AI，为了查清公园门口谁人多，连轴转了十一天。",
              "一个 AI，为了查清\n公园门口谁人多\n连轴转了 11 天",
              "11 天", "hook", "orange", "真实事件"),

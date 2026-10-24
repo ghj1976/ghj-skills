@@ -1,32 +1,31 @@
-# QA checklist
+# QA 清单
 
-Run from the project folder (scripts beside `script_data.py`). Set `FFMPEG` if
-the default WinGet path does not exist.
+在项目目录下执行（脚本和 `script_data.py` 放在一起）。默认 WinGet 路径不存在时，先设 `FFMPEG`。
 
-## Automated
+## 自动检查
 
 ```bash
-# set once
+# 设置一次
 export FFMPEG="C:/Users/<user>/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-9.0.2-full_build/bin/ffmpeg.exe"
 export FFPROBE="$(dirname "$FFMPEG")/ffprobe.exe"
 
-# specs, CFR, decode, frozen windows, loudness
+# 规格、CFR、解码、冻结窗口、响度
 python qa_video.py out/final.mp4 --times 9.5,49,175
 ```
 
-Pass criteria:
+通过标准：
 
-| Check | Pass |
+| 检查项 | 通过条件 |
 |---|---|
-| duration | matches `out/timeline.json` ±0.1 s |
-| video | 1080×1920 (or 1920×1080), H.264, `r_frame_rate=30/1` |
-| PTS | every `dt=0.0333`, no duplicate timestamps |
-| decode | `ffmpeg -v error -i final.mp4 -f null -` prints nothing |
-| frozen windows | `zero_runs=0`; no run of ≥3 frames with diff < 0.02 |
-| loudness | I = −17.5…−14.5 LUFS; true peak ≤ −1.0 dB |
-| audio | AAC 48 kHz stereo |
+| 时长 | 与 `out/timeline.json` 相差 ±0.1 秒 |
+| 视频 | 1080×1920（或 1920×1080），H.264，`r_frame_rate=30/1` |
+| PTS | 每个 `dt=0.0333`，无重复时间戳 |
+| 解码 | `ffmpeg -v error -i final.mp4 -f null -` 无输出 |
+| 冻结窗口 | `zero_runs=0`；没有连续 ≥3 帧 diff <0.02 |
+| 响度 | I = −17.5…−14.5 LUFS；真峰值 ≤ −1.0dB |
+| 音频 | AAC 48kHz 立体声 |
 
-Manual spot checks (extract stills):
+人工抽查（抽帧）：
 
 ```bash
 for t in 2.5 9.3 9.7 75 178; do
@@ -34,33 +33,30 @@ for t in 2.5 9.3 9.7 75 178; do
 done
 ```
 
-- [ ] Hook frame has the premise + motion, not a static title.
-- [ ] At a cut boundary, the previous caption is visible until the next speech
-      starts; no sentence is missing.
-- [ ] Underline sits below the glyph, not through it (look at a large CJK word).
-- [ ] Text on the brightest image is readable (scrim present).
-- [ ] End card has source, credit, and a CTA.
-- [ ] No double captions / double images during transitions.
-- [ ] No frame with two big headers overlapping.
+- [ ] 钩子帧有前提 + 运动，不是静止标题。
+- [ ] 切点处上一句字幕保留到下一句开口；没有丢句。
+- [ ] 下划线在字形下方，不穿过笔画（找一个大的中文字看）。
+- [ ] 最亮图片上的文字仍然可读（有 scrim）。
+- [ ] 结尾卡有来源、署名、互动引导。
+- [ ] 转场没有双字幕/双画面。
+- [ ] 没有两行大字重叠的帧。
 
-## Audio boundary check
+## 音频边界检查
 
-Pick a cut and inspect the mixed audio energy:
+选一个切点，看混音能量：
 
 ```bash
 "$FFMPEG" -hide_banner -nostats -ss 7.5 -t 2.5 -i out/audio_mix.wav \
   -af volumedetect -f null -
 ```
 
-Better: print 100 ms RMS in Python around the boundary. Speech should end, then
-a pause, then the next sentence starts exactly at the visual cut. If the cut is
-inside speech, the ASR times are wrong; re-run `align_asr.py` and rebuild.
+更直接的做法：用 Python 打印边界附近每 100ms 的 RMS。应该是“上一句结束 → 停顿 → 下一句在画面切点处开口”。如果切点落在语音中间，说明 ASR 时间不对；重跑 `align_asr.py` 再构建。
 
-## Delivery
+## 交付
 
-- [ ] `out/*.mp4` plays on a phone (system gallery + browser).
-- [ ] `out/subtitles.srt` opens and timestamps match.
-- [ ] `out/解说稿.md` has `mm:ss` for every beat.
-- [ ] `README.md` lists regenerate commands and the voice/format decisions.
-- [ ] Previous version still exists (separate folder or `out/vN/`).
-- [ ] File name is human-readable and does not contain the old version's title.
+- [ ] `out/*.mp4` 能在手机系统相册和浏览器里播放。
+- [ ] `out/subtitles.srt` 能打开，时间戳对得上。
+- [ ] `out/解说稿.md` 每个 beat 都有 `mm:ss`。
+- [ ] `README.md` 写了重跑命令和音色/画幅决策。
+- [ ] 旧版本还在（单独目录或 `out/vN/`）。
+- [ ] 文件名可读，且不包含旧版本的标题。

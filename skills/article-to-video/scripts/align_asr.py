@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Word-level ASR alignment for caption/visual boundaries.
+"""用词级 ASR 对齐字幕/画面边界。
 
-Critical: resample 48 kHz to 16 kHz before Whisper. Passing 48 kHz makes
-Whisper hear slow audio and hallucinate English.
+关键：Whisper 之前必须把 48kHz 重采样到 16kHz。直接喂 48kHz，
+Whisper 会听到慢速音频，输出英文幻觉。
 
-Boundary after beat i = start time of the first word of beat i+1.
-That guarantees the previous sentence has finished before a cut.
+第 i 个 beat 的结束边界 = 第 i+1 个 beat 第一个词的开始时间。
+这样能保证切换前上一句已经播完。
 """
 import json
 import re
@@ -101,7 +101,7 @@ def main():
             prev = t
         times.append(dur)
         out[str(gi)] = {"dur": round(dur, 3), "times": [round(x, 3) for x in times]}
-        print("chunk", gi, "times", [round(x, 2) for x in times], flush=True)
+        print("分段", gi, "边界", [round(x, 2) for x in times], flush=True)
     (AUD / "asr_times.json").write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
 
 

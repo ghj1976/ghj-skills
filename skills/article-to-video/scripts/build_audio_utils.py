@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Music bed, SFX, mix, SRT and script export for the video pipeline.
+"""视频流程的垫乐、音效、混音、SRT 与解说稿导出。
 
-Project-relative: expect out/ to exist. FFMPEG can be overridden by env.
-Edit IMPACT_IDS / RISER_BEFORE for the current story.
+相对项目目录：out/ 需已存在；FFMPEG 可用环境变量覆盖。
+按当前故事修改 IMPACT_IDS / RISER_BEFORE。
 """
 import os
 import subprocess
@@ -19,13 +19,13 @@ OUT = BASE / "out"
 OUT.mkdir(exist_ok=True)
 SR = 48000
 FFMPEG = _ffmpeg()
-# beats that get an impact SFX; edit per project
+# 需要 impact 音效的 beat；按项目修改
 IMPACT_IDS = ["00_01", "02_03", "04_01", "06_03"]
 RISER_BEFORE = "06_03"
 
 
 def music(duration):
-    """Slow Am-F-C-G pad + soft 52 Hz pulse, RMS ≈ -40 dBFS."""
+    """Am–F–C–G 慢铺底 + 52Hz 轻脉冲，RMS ≈ -40 dBFS。"""
     n = int(duration * SR)
     chords = [[110.0, 164.81, 220.0, 261.63], [87.31, 130.81, 174.61, 220.0],
               [130.81, 196.0, 261.63, 329.63], [98.0, 146.83, 196.0, 246.94]]
@@ -101,7 +101,7 @@ def riser(dur=1.6):
 
 
 def sfx_track(tl, impacts=None, riser_before=None):
-    """Place whooshes, impacts, ticks and a riser on the timeline."""
+    """按时间轴放置 whoosh、impact、tick 和 riser。"""
     impacts = IMPACT_IDS if impacts is None else impacts
     riser_before = RISER_BEFORE if riser_before is None else riser_before
     n = int(tl["duration"] * SR)

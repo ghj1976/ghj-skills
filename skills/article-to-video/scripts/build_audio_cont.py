@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Continuous long-form narration + timeline.
+"""连续长段口播 + 时间轴。
 
-Never cuts the voice per beat. Chunks are concatenated with short gaps and the
-visual/caption boundaries come from asr_times.json (produced by align_asr.py).
+不按 beat 切音频。长段之间只留短空隙，画面/字幕边界来自
+asr_times.json（由 align_asr.py 生成）。
 """
 import json
 import sys
@@ -20,11 +20,11 @@ AUD = BASE / "audio"
 OUT = BASE / "out"
 OUT.mkdir(exist_ok=True)
 SR = 48000
-LEAD = 1.0          # silence before the first word
-CHUNK_GAP = 0.65    # silence between long chunks
-TAIL = 2.2          # end-card hold
+LEAD = 1.0          # 开头留白
+CHUNK_GAP = 0.65    # 长段之间的空白
+TAIL = 2.2          # 结尾卡停留
 GROUPS = [(i, min(i + 1, len(script_data.SCENES) - 1))
-          for i in range(0, len(script_data.SCENES), 2)]   # 2 scenes per chunk
+          for i in range(0, len(script_data.SCENES), 2)]   # 每段 2 个场景
 try:
     from project_config import EXCLUDE
 except ImportError:
@@ -45,7 +45,7 @@ def trim(y, sr, th=-45.0, pad=0.08):
 
 
 def fallback_boundaries(y, sr, beats):
-    """Character-proportional boundaries biased late; only used if ASR is absent."""
+    """按字数比例估算、偏晚的边界；只在 ASR 结果缺失时使用。"""
     n = len(y)
     dur = n / sr
     total = sum(len(b["text"]) for b in beats)
