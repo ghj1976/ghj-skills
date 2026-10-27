@@ -61,14 +61,21 @@ def diffs(path, start, dur=1.2):
         files = sorted(Path(td).glob("*.png"))
         prev, ds = None, []
         for f in files:
-            a = np.asarray(Image.open(f).resize((270, 480)), dtype=np.float32)
+            a = np.asarray(Image.open(f).convert("RGB").resize((270, 480)),
+                           dtype=np.float32) / 255.0
             if prev is not None:
                 ds.append(float(np.mean(np.abs(a - prev))))
             prev = a
         return ds
 
 
-def frozen_runs(ds, thresh=0.02, run=3):
+def frozen_runs(ds, thresh=1e-6, run=3):
+    """冻结 = 解码后连续多帧完全相同（差值 0）。
+
+    注意单位：帧差是 0–1 归一化后的平均绝对差。慢推拉每帧只动 0.00005 也很正常，
+    不能判成冻结；0.02 这种阈值会把正常的慢镜头全判死（早期版本漏了 /255，
+    阈值实际等价于 0.00008，反而接近“完全相同”）。
+    """
     cnt, bad = 0, []
     for i, v in enumerate(ds):
         cnt = cnt + 1 if v < thresh else 0
@@ -128,7 +135,7 @@ def main():
         ds = diffs(path, t)
         bad = frozen_runs(ds)
         print(f"window {t:.1f}s frames={len(ds)} zero_runs={len(bad)} "
-              f"min_diff={min(ds) if ds else 0:.3f}")
+              f"min_diff={min(ds) if ds else 0:.5f} identical={sum(1 for d in ds if d == 0)}")
         if bad:
             print("FAIL: frozen frames at", bad)
             ok = False

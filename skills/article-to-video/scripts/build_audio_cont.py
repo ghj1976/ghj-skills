@@ -60,6 +60,36 @@ def fallback_boundaries(y, sr, beats):
     return times
 
 
+def onsets_of(y, sr, quiet_db=-38.0, voiced_db=-36.0, sustain=4):
+    """返回语音起点（20ms 窗，从静音跳过阈值且持续 100ms）。"""
+    win = int(0.02 * sr)
+    n = len(y) // win
+    db = 20 * np.log10(np.sqrt(np.mean(y[:n * win].reshape(n, win) ** 2, 1)) + 1e-12)
+    out = []
+    for i in range(1, n - sustain):
+        if db[i] > voiced_db and db[i - 1] <= quiet_db and (db[i:i + sustain] > voiced_db).all():
+            out.append(i * 0.02)
+    return out, db
+
+
+def snap_to_onsets(times, y, sr, tol=0.55):
+    """把每个切点吸附到最近的语音起点，避免“画面先跳、声音没到”。
+
+    whisper 的词起点会有 ±0.3s 误差，长段之间还有空白；不吸附就会出现
+    章节切点比开口早/晚 0.2–0.5s，观众感知为“卡一下”。
+    """
+    ons, _ = onsets_of(y, sr)
+    out = list(times)
+    for k in range(1, len(times) - 1):
+        t = times[k]
+        cand = [o for o in ons if abs(o - t) <= tol]
+        if cand:
+            out[k] = min(cand, key=lambda x: abs(x - t))
+    for k in range(1, len(out)):
+        out[k] = max(out[k], out[k - 1] + 0.4)
+    return out
+
+
 def main():
     asr_path = AUD / "asr_times.json"
     asr = json.loads(asr_path.read_text(encoding="utf-8")) if asr_path.exists() else None
@@ -103,6 +133,14 @@ def main():
                 "eyebrow": b["eyebrow"], "img": b["img"],
                 "start": round(st, 4), "end": round(en, 4), "duration": round(en - st, 4),
             })
+
+    # 切点吸附到真实开口（在拼接好的 narration 上做，不含音乐）
+    starts = [b["start"] for b in beats] + [round(total, 4)]
+    snapped = snap_to_onsets(starts, buf, SR)
+    for i, b in enumerate(beats):
+        b["start"] = round(snapped[i], 4)
+        b["end"] = round(snapped[i + 1], 4)
+        b["duration"] = round(b["end"] - b["start"], 4)
 
     scenes = []
     for si, sc in enumerate(script_data.SCENES):

@@ -116,10 +116,10 @@ def sfx_track(tl, impacts=None, riser_before=None):
         if e > s:
             buf[s:e] += sig[:e - s] * gain
 
-    add(impact(), 0.04, 0.75)
-    add(whoosh(), 0.86, 0.5)
+    # 开头不再放 impact / whoosh：噪声冲击叠在音乐淡入上会像“刺啦”一声
+    # （镜头 1.0 秒进第一句，留白比音效干净）
     for sc in tl["scenes"][1:]:
-        add(whoosh(), sc["start"] - 0.18, 0.55)
+        add(whoosh(), sc["start"] - 0.18, 0.45)
     for bid in impacts:
         b = next((x for x in tl["beats"] if x["id"] == bid), None)
         if b:

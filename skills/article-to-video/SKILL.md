@@ -28,6 +28,11 @@ description: 把 Markdown 文章（尤其是中文公众号文章）制作成带
 6. **验收解码后的 MP4，不是源帧。** 编码器会跳过低运动块；解码后连续多帧完全一样，才是真的冻结。
 7. **保留旧版本。** 新版本放新目录或 `out/vN/`；不要覆盖用户要对比的版本。
 8. **按手机屏幕验收。** 文字要在 1080×1920 上、避开右侧和底部平台 UI 后仍然可读。
+9. **切点吸附到“开口”。** whisper 的词起点有 ±0.3s 误差，长段之间还有空白；必须把画面切点吸附到真实的语音起点，否则观众感知为“卡一下”。（`build_audio_cont.py` 的 `snap_to_onsets`）
+10. **每个镜头单独运动。** 按场景计时推近，摊到 20–30 秒上每帧只动 0.0001，等于静止画面；要按 beat 计时、切镜头时重置。
+11. **配图逐句判断，不要“每场景一张默认图”。** 一句讲规模、一句讲预算，却共用一张天平，观众立刻觉得“图不对文”。
+12. **第一条音轨的 1 秒内不放音效。** 音乐还在淡入时叠 impact/whoosh，就是开头一声“刺啦”。
+13. **一条主线讲透，胜过五条线各说一句。** 用户说“信息量太大/太跳跃”时，砍到一条线（2:00–2:30），而不是加速。
 
 ## 新项目脚手架
 
@@ -56,10 +61,11 @@ cp "$SKILL"/scripts/script_data_template.py "$PROJ"/script_data.py
 |---|---|---|
 | 0 素材 | 图片映射、画幅决策 | 每张图都看过并匹配段落 |
 | 1 脚本 | `script_data.py`，35–50 个 beat | 前 3 秒有钩子；总长 2:45–3:30 |
-| 2 配音 | 2–4 个长段 WAV | 段基频稳定（极差 ≤25Hz）、4.5–6.5 字/秒、`check_voice.py` PASS |
-| 3 音频 | 连续 `narration.wav`、音乐/音效、混音 | −16 LUFS，真峰值 ≤ −1.5dB |
+| 2 配音 | 2–4 个长段 WAV | `check_voice.py` PASS：段间基频极差 ≤30Hz、LTAS ≥0.90、语速 4.0–7.5 字/秒 |
+| 2.5 清理 | `clean_audio.py` 处理过的长段 | 段首无瞬态、长停顿 ≤0.55s、语速统一 |
+| 3 音频 | 连续 `narration.wav`、音乐/音效、混音 | `check_audio.py` PASS：开头无瞬态、无爆音、切点=开口、−16 LUFS |
 | 4 对齐 | `asr_times.json`、`timeline.json` | 切点 = 下一句开口 |
-| 5 渲染 | 1080×1920 或 1920×1080 MP4 | 每个镜头都在动，无叠化 |
+| 5 渲染 | 1080×1920 或 1920×1080 MP4 | 每个镜头都在动，无叠化，配图逐句对得上 |
 | 6 QA | 自动报告、截图、README | CFR、解码干净、无冻结窗口 |
 
 ## 阶段 0 — 素材与图片
@@ -98,6 +104,16 @@ project/
 ## 阶段 1 — 脚本与分镜
 
 目标总长 **2:45–3:30**，语速 **5.2–5.8 中文字/秒**，通常 900–1100 字。第一版 1667 字、7.8 字/秒，即使 3:58 也显得急。
+
+**密度优先于覆盖。** 公众号原文常有 4–6 个并列论点；视频里一次只讲一条主线，宁可从 3:20 砍到 2:15。
+判据：如果一条线只能用一两句带过（“行业也在跟进”“你也可以自测”），就不要放进视频——一句带过等于没说。
+被否的两版分别是：45 个口号各说一句（太跳跃）、5 条线塞进 3:20（没说透）。
+
+**段落式写法，不要口号式拆分。** 每个 beat 是一句完整的话，整段连起来要能读通：
+
+1. 话题句 → 2. 证据（数字/例子）→ 3. 承接下一段的句子。
+   例：「那这条边界，是怎么画出来的？」→「第一个条件，是技能半衰期足够短。」→「过去…能用四五年」→「但现在被压缩到一到三年」→「不是人变笨了，是工具贬值太快」。
+   反例（口号式）：「被买断的六万人，不是因为能力差。」「真正值得琢磨的不是规模，是边界。」——两句都是结论，中间没有承接，连读像标题滚播。
 
 结构：
 
@@ -174,15 +190,26 @@ python -m venv --system-site-packages .venv-tts
 5. 跑 `check_voice.py`，PASS 再往下走；不合格先换参考片段/重生成该段，不要用变调硬拉。
 6. 长段保留，后面绝不再切。
 
-命令：`scripts/tts_chunks.py`，分别跑 `--part 0 --of 2` 和 `--part 1 --of 2`；生成完跑 `python check_voice.py`。
+命令：`scripts/tts_chunks.py`，分别跑 `--part 0 --of 2` 和 `--part 1 --of 2`。生成完先清理、再验音色：
+
+```bash
+python clean_audio.py            # 统一 atempo + 去掉段首咔哒 + 压缩 0.9s 这种长停顿
+python check_voice.py            # 基频/LTAS/语速门禁
+```
+
+`check_voice.py` 报“段间基频极差 >30Hz”时，用 `regen_chunk.py 偏差段号 --seeds 20,21,22` 按种子重生成，
+按“基频最接近参考 + 频谱最像”自动挑一条（实测能把 263/248/224 收到 239/249/240）。
+
+`clean_audio.py` 很关键：VoxCPM2 每段开头有 40ms 的 −11dB 瞬态，后面还跟着 0.3–0.4s 静音；
+段落拼接点又正好落在章节开头，不清掉就会出现“**每节开头咔一下、停半拍**”。
 
 ## 阶段 3 — 连续音频与混音
 
-1. 每段只裁首尾静音（−45dB 阈值，80ms 余量），段间留 0.6–0.7 秒空白。**不要按 beat 加空隙，也不要按 beat 切。**
+1. 每段只裁首尾静音（−45dB 阈值，80ms 余量），段间留 0.5–0.6 秒空白（句内停顿已被 `clean_audio.py` 压到 ≤0.45，这里再长就会显停顿）。**不要按 beat 加空隙，也不要按 beat 切。**
 2. 48kHz 生成 `narration.wav`、`music.wav`、`sfx.wav`。
 3. 混音：口播 `loudnorm=I=-16:TP=-1.5:LRA=11`；音乐约 −38dBFS RMS；音效峰值约 0.30；`amix` 后加 `alimiter=limit=0.95`。
 4. 检查分轨：口播 RMS 约 0.13，音乐约 0.010，音效约 0.005，最终真峰值 ≤ −1.5dB。第一版音效峰值到 1.0 直接削波，限幅器修掉了。
-5. 音效：场景起点 whoosh、3–4 个重点 beat 用 impact、数字用 tick、反转前一个 riser。要稀疏；每 3 秒一个 whoosh 就成噪音了。
+5. 音效：场景起点 whoosh、3–4 个重点 beat 用 impact、数字用 tick、反转前一个 riser。要稀疏；每 3 秒一个 whoosh 就成噪音了。**开头 0–1 秒不要放 impact/whoosh**：音乐还在淡入，噪声冲击叠上去就是一声“刺啦”。
 
 对应脚本：`scripts/build_audio_cont.py` + `scripts/build_audio_utils.py`。
 
@@ -214,6 +241,7 @@ python -m venv --system-site-packages .venv-tts
 运动规则：
 
 - **线性、无 clamp 的 Ken Burns**，覆盖包含停顿的整个镜头：`prog = min(1, lt / (next_start - start))`。不要用 smoothstep，它首尾速度为 0，会制造停顿。
+- **按 beat 计，不按场景计。** 场景有 8–10 个 beat、20–30 秒，`prog` 摊到整场后每帧只变 0.0001，等于静止画面；按 beat 计时，每个镜头 3%–5% 推近，切镜头时重置（重置被硬切掩盖，看不出来）。
 - 亚像素采样：`Image.transform(..., Image.AFFINE, ...)`，用浮点缩放/位移。整数 `crop().resize()` 会每隔几帧跳 1px，产生微抖。
 - **硬切，不叠化。** 叠化会让两行大字双重曝光，看起来像故障。切点用 whoosh 盖住。
 - 文字/数据卡：整个画面缓慢推近（每场景约 7.5%）+ 低透明度光扫。否则编码器会跳过相同帧，卡片就冻住了。
@@ -228,6 +256,13 @@ python -m venv --system-site-packages .venv-tts
 - 纯文字版式：画字前先加暗色 scrim（alpha≈125），避免浅色图片把字洗掉。
 - 字体用 `C:\Windows\Fonts` 下的 `Noto Sans SC Bold` / `Medium`，传完整 `.otf` 路径（含空格）。
 
+**配图规则（本轮返工两次）：**
+
+- 逐句判断，只在这句话和图片内容真的对得上时才配图（`script_data.py` 里的 `BEAT_IMG` 逐 beat 覆盖，`""` 表示不用图）。
+- 原文配图通常自带中文标题（“资本流向，决定岗位边界”“工具贬值快于人成长”）；如果图上文字和这句语义相反，就不要配这张图（例：讲“过去能顶四五年”却配“工具贬值快”）。
+- 一个 30 多镜头的视频，**一半有图、一半是数据/文字卡**是正常的；宁可少配图，也不要每场景套同一张默认图。
+- 配图没法自动判语义，但可以自动拼图：`python contact_sheet.py --video out/xxx.mp4` 生成 `out/配图对照.png`，一眼扫完 30 多个镜头。
+
 `scripts/render.py` 是可直接用的竖屏渲染器。首次渲染前改项目副本里的 `BRAND`、`TITLE_MAIN`、`TITLE_SUB`、`TITLE_KICKER`、`TITLE_CREDIT`、`END_L1/L2/Q/CTA/SOURCE`，或设置对应的 `VIDEO_*` 环境变量。不要带着示例品牌名出片。
 
 ## 阶段 6 — QA 与交付
@@ -236,7 +271,7 @@ python -m venv --system-site-packages .venv-tts
 
 - `ffprobe`：时长、1080×1920、30/1、H.264/AAC。
 - PTS 间隔：每个 `1/30` 秒，无重复时间戳；`-f null -` 完整解码无错误。
-- 帧差：在 3–5 个已知切点附近解码取帧；连续 ≥3 帧平均绝对差 <0.02 判为冻结。
+- 帧差：在 3–5 个已知切点附近解码取帧，**帧差要 0–1 归一化**；连续 ≥3 帧完全相同（diff = 0）才判冻结。慢推拉每帧只差 0.00005 是正常的，不要用 0.02 这种阈值把慢镜头判死。
 - 音频：`ebur128=peak=true`，整体约 −16 LUFS，真峰值 ≤ −1.0dB（目标 −1.5）。
 
 人工抽查：
@@ -270,6 +305,12 @@ python -m venv --system-site-packages .venv-tts
 | CPU VoxCPM 慢 40 倍 | CPU 版 torch | 隔离 venv 装 CUDA torch |
 | 字体豆腐块 | WSL 没有中文字体 | 用 Windows Python + `C:\Windows\Fonts\NotoSansSC...` |
 | 图片链接全坏 | MD 指向 `assets/...` | 按文章顺序映射，逐张看图，修 `img` |
+| 开头“刺啦”一声 | 音乐淡入期叠了 impact/whoosh | 第一秒不放音效；转场 whoosh 降到 0.45 |
+| 每节开头声音卡一下 | 长段段首 40ms 瞬态 + 0.3s 静音，拼接点落在章节首 | `clean_audio.py` 去瞬态/压停顿；段间空白 0.5–0.6s |
+| 画面像静止画面 | 推近按场景计，摊到 20–30 秒每帧 0.0001 | 改按 beat 计；文字卡再加光扫 |
+| 配图和内容不搭 | 每场景一张默认图 | `BEAT_IMG` 逐句覆盖；对不上就不配图，用数据/文字卡 |
+| 音色一段一变 | 长段生成方差，段间基频可差 40Hz | `regen_chunk.py` 换种子重生成偏差段；`check_voice.py` 把关 |
+| 切点比开口早/晚半拍 | whisper 词起点误差 + 长段空白 | `snap_to_onsets` 吸附到真实开口（容差 0.55s，单调约束 0.4s） |
 
 ## 完成标准
 
@@ -283,6 +324,8 @@ python -m venv --system-site-packages .venv-tts
 - [ ] CFR 30fps，完整解码干净，切点附近无连续冻结帧。
 - [ ] `render.py` 项目文案已改（没有示例品牌名）。
 - [ ] SRT + 解说稿 + README；旧版本保留。
+- [ ] `check_audio.py` PASS：开头无瞬态、无爆音、最长停顿 ≤0.65s、切点=开口（±0.15s）。
+- [ ] `contact_sheet.py` 生成对照图，逐镜头看过配图是否对得上。
 - [ ] 在手机尺寸播放器上实际看过一遍。
 
 ## 详细参考
@@ -297,13 +340,17 @@ python -m venv --system-site-packages .venv-tts
 复制到项目里、和 `script_data.py` 放在一起；`voices/` 也要一起拷（内置 q1 音色）。默认假设 `audio/chunk_0..N.wav`、`out/`、Windows Python/ffmpeg；音色优先用 `audio/prompt_ref.wav`，没有就用 `voices/<VOICE>/`。
 
 - `scripts/tts_chunks.py` — VoxCPM2 长段配音（默认 q1 音色，自动套用 `voice.json` 的 atempo）。
+- `scripts/clean_audio.py` — 统一 atempo、去段首瞬态、压缩长停顿（修“每节卡一下”）。
+- `scripts/regen_chunk.py` — 音色漂移时按种子重生成某段，挑基频/频谱最像的。
 - `scripts/make_voice_ref.py` — 从视频/音频抽音色：词级时间戳 → 切片 → 去伴奏 → `voices/<name>/`。
 - `scripts/check_voice.py` — 量段基频/LTAS/语速，判断音色是否达标。
 - `scripts/align_asr.py` — 16kHz faster-whisper 词级对齐 → `asr_times.json`。
 - `scripts/build_audio_utils.py` — 垫乐、音效、混音、SRT、解说稿。
-- `scripts/build_audio_cont.py` — 连续音频 + 分轨 + `timeline.json`。
+- `scripts/build_audio_cont.py` — 连续音频 + 分轨 + `timeline.json`；切点吸附到开口。
 - `scripts/render.py` — 竖屏渲染器（含运动/下划线修复）。
 - `scripts/qa_video.py` — CFR/解码/帧差/响度检查。
+- `scripts/check_audio.py` — 声音门禁：开头瞬态/爆音/长停顿/切点对齐/响度。
+- `scripts/contact_sheet.py` — 按镜头抽帧拼成 `配图对照.png`，人工核对配图。
 - `scripts/project_config.py` — 共享 `EXCLUDE`，可选 `TEMPO` / `VOICE`。
 - `scripts/ffmpeg_path.py` — 自动定位 ffmpeg/ffprobe（避开 WSL 下 `%USERNAME%` 乱码）。
 

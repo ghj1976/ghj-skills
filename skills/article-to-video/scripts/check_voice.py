@@ -4,7 +4,7 @@
 检查三件事：
   1. 每段基频中位数是否落在参考音 ±18% 的区域内（同性别、同音区），段间极差 ≤30Hz；
   2. 每段与参考音的长时平均频谱（LTAS）相关系数 ≥ 0.90；
-  3. 语速是否落在 4.5–6.5 字/秒。
+  3. 语速：字/秒（含停顿）落在 4.0–7.5；同时打印停顿占比，方便判断是不是被“压停顿”压太快。
 
 不硬套“85–115Hz”：那是低沉男声的经验值，q1 这类女声正常就在 225–251Hz。
 
@@ -82,13 +82,20 @@ def main():
         r = corr(ltas(c), ref_l)
         f0s.append(f0)
         bad = []
-        if not (4.5 <= cps <= 6.5):
+        if not (4.0 <= cps <= 7.5):
             bad.append("语速")
         if r < 0.90:
             bad.append("音色")
         if not (lo <= f0 <= hi):
             bad.append("音区")
-        print(f"chunk {i}: {dur:6.2f}s  cps={cps:4.2f}  f0={f0:6.1f}Hz  LTAS={r:.3f}"
+        y, _sr = sf.read(str(c), dtype="float32")
+        if y.ndim > 1:
+            y = y.mean(1)
+        w = max(1, int(_sr * 0.02))
+        nwin = len(y) // w
+        db = 20 * np.log10(np.sqrt(np.mean(y[:nwin * w].reshape(nwin, w) ** 2, 1) + 1e-12))
+        sil = float((db < -45).mean())
+        print(f"chunk {i}: {dur:6.2f}s  cps={cps:4.2f}  silence={sil:.0%}  f0={f0:6.1f}Hz  LTAS={r:.3f}"
               + (f"  << FAIL: {'/'.join(bad)}" if bad else "  ok"))
         if bad:
             ok = False
