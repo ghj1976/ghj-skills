@@ -1,0 +1,19 @@
+{
+  "id": "q1",
+  "label": "q1 女声（02/q1.mp4 的解说音色）",
+  "prompt_text": "目前项目已经完全开源，原理就是AI通过WiFi连上电视，禁用25个预装包。",
+  "prompt_wav": "prompt_ref.wav",
+  "reference_wav": "reference_ref.wav",
+  "source": "02/q1.mp4（29.7 秒、带背景音乐的解说视频）",
+  "prompt_span_s": [8.66, 14.32],
+  "reference_span_s": [8.66, 22.72],
+  "preprocess": "highpass 70Hz → VoxCPM2 ZIP-Enhancer 去伴奏 → 峰值归一 0.9",
+  "sample_rate": 16000,
+  "prompt_duration_s": 5.72,
+  "reference_duration_s": 14.06,
+  "f0_median_hz": 238.6,
+  "natural_cps": 6.6,
+  "atempo": 0.92,
+  "cps_after_tempo": 5.9,
+  "notes": "带 BGM 的参考必须先过 ZIP-Enhancer，否则克隆会带底噪；四段实测基频 225–251Hz，源音约 240–257Hz。自然语速偏快，0.92 倍 atempo 后 5.7–6.1 字/秒。"
+}

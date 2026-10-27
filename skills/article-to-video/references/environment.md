@@ -69,3 +69,22 @@ Pillow 可以直接加载带空格的 `.otf` 路径。不要依赖 fontconfig。
 - Windows 路径用原始字符串传（`r"D:\project\out"`）；不要在 WSL 里 `cd` 到 Windows 风格路径。
 - 当前工作目录和 DSH checkout 无关；不要从 checkout 位置推断项目路径。
 - 磁盘：3 分钟、1080×1920、CRF 18–20 的成片约 40–60MB；中间文件（口播/音乐/音效分轨）再加约 100MB。
+
+## torchcodec / ZIP-Enhancer
+
+VoxCPM2 的 `ZipEnhancer` 用 `torchaudio.load`，而 torchaudio 2.11 默认走 torchcodec。Windows 上如果没装 **shared** FFmpeg（WinGet 的 Gyan 包是静态编译），会报：
+
+```
+FileNotFoundError: Could not find module '...\torchcodec\libtorchcodec_core4.dll'
+```
+
+不要为此换 ffmpeg。`scripts/make_voice_ref.py` 在调用去噪前把 `torchaudio.load/save` 换成 soundfile 实现即可：
+
+```python
+import soundfile as sf, torch, torchaudio
+torchaudio.load = lambda p, **k: (torch.from_numpy(sf.read(str(p), dtype="float32", always_2d=True)[0].T.copy()),
+                                 sf.info(str(p)).samplerate)
+torchaudio.save = lambda p, w, sr, **k: sf.write(str(p), w.detach().cpu().numpy().T, int(sr))
+```
+
+去噪模型从 ModelScope 拉取，首次约几十 MB，缓存后离线可用。

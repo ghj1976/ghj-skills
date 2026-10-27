@@ -15,6 +15,7 @@ description: 把 Markdown 文章（尤其是中文公众号文章）制作成带
 - Markdown 里的图片指向不存在的 `assets/...`，但图片就在文章同目录。
 - 要做手机端竖屏（视频号 / 抖音 / 朋友圈）或 16:9 横屏。
 - 已有视频出现：开头静止、语速太快/不可信、图片切换卡顿、字幕抢在话没说完前切换、尾音缺失。
+- 想用某条视频里的解说音色（“用这个声音重做”）：见阶段 2 的默认音色与 `make_voice_ref.py`。
 - 需要一套可复用的流程：字幕、解说稿、质量门。
 
 ## 硬性规则
@@ -36,13 +37,14 @@ SKILL=<本 skill 根目录>   # 例如 /mnt/e/mycode/ghj-skills/skills/article-t
 PROJ=work/<视频短名>
 mkdir -p "$PROJ/audio" "$PROJ/out"
 cp "$SKILL"/scripts/*.py "$PROJ"/
+cp -r "$SKILL"/scripts/voices "$PROJ"/     # 内置音色（默认 q1），不用自己准备 prompt_ref
 cp "$SKILL"/scripts/script_data_template.py "$PROJ"/script_data.py
 ```
 
 然后：
 
 1. 改 `script_data.py`（场景、beat、`img` 文件名）。
-2. 放入 4–8 秒的 `audio/prompt_ref.wav`，把它的准确文本写进 `tts_chunks.py` 的 `PROMPT_TEXT`。
+2. 选音色：默认用内置 `voices/q1`（女声，已去伴奏），直接就能配音；要换音色用 `make_voice_ref.py`，或把 4–8 秒的 `audio/prompt_ref.wav` 放进项目（项目内的会覆盖内置音色）。
 3. 改 `project_config.py` 的 `EXCLUDE`；配音、对齐、构建三个脚本共用这一份，保持一致。
 4. 如果图片不在项目目录，设置 `ASSET_DIR`，或渲染时传 `--assets <dir>`。
 
@@ -54,7 +56,7 @@ cp "$SKILL"/scripts/script_data_template.py "$PROJ"/script_data.py
 |---|---|---|
 | 0 素材 | 图片映射、画幅决策 | 每张图都看过并匹配段落 |
 | 1 脚本 | `script_data.py`，35–50 个 beat | 前 3 秒有钩子；总长 2:45–3:30 |
-| 2 配音 | 2–4 个长段 WAV | 段基频 85–115Hz，4.5–6.5 字/秒 |
+| 2 配音 | 2–4 个长段 WAV | 段基频稳定（极差 ≤25Hz）、4.5–6.5 字/秒、`check_voice.py` PASS |
 | 3 音频 | 连续 `narration.wav`、音乐/音效、混音 | −16 LUFS，真峰值 ≤ −1.5dB |
 | 4 对齐 | `asr_times.json`、`timeline.json` | 切点 = 下一句开口 |
 | 5 渲染 | 1080×1920 或 1920×1080 MP4 | 每个镜头都在动，无叠化 |
@@ -81,8 +83,11 @@ project/
   build_audio_cont.py     # 连续音频 + 时间轴
   render.py               # 竖屏/横屏画面渲染
   qa_video.py             # 自动检查
+  make_voice_ref.py       # 从视频/音频抽音色（切片 + 去伴奏）
+  check_voice.py          # 量音色/语速是否达标
+  voices/q1/              # 内置音色：prompt_ref.wav + reference_ref.wav + voice.json
   audio/
-    prompt_ref.wav        # 4–8 秒、文本已知的音色提示
+    prompt_ref.wav        # 可选：项目自定义音色（覆盖内置）
     chunk_0..N.wav        # 长段配音
     asr_times.json
   out/
@@ -135,6 +140,16 @@ model.tts_model.generate_with_prompt_cache(
     target_text=..., prompt_cache=..., inference_timesteps=10)
 ```
 
+### 默认音色：q1（女声，已内置）
+
+`scripts/voices/q1/` 打包了一套现成音色：prompt 5.7 秒 + reference 14 秒，都是**去掉背景音乐后的干净人声**（prompt 基频中位数约 239Hz，自然语速约 6.6 字/秒）。脚手架把 `voices/` 拷进项目后，`tts_chunks.py` 默认就用它，不必再准备 `audio/prompt_ref.wav`。
+
+- 参数都在 `voices/q1/voice.json`：`prompt_text`（prompt 的准确文本，必需）、`atempo`（0.92，把偏快的语速压到 5.7–6.1 字/秒）、切片区间与来源。
+- 项目里放了 `audio/prompt_ref.wav` 时以项目为准（自定义音色优先）；也可用 `VOICE=<name>` 选 `voices/<name>`。
+- **换音色**：`python make_voice_ref.py --src ../../02/q1.mp4 --prompt 8.66,14.32 --ref 8.66,22.72 --transcribe` 先打印词级时间戳，挑好边界（落在词的起止，不切在字中间）后去掉 `--transcribe` 重跑，会生成 `voices/<name>/`（含 `voice.json`）。
+- **参考音频带 BGM 时必须先去噪**：`make_voice_ref.py` 已内置 ZIP-Enhancer；直接拿带伴奏的原片克隆，会把底噪和音乐一起学走。
+- **验收音色**：`python check_voice.py` —— 每段基频落在参考 ±18% 内、段间极差 ≤30Hz、与参考的 LTAS 相关 ≥0.90、语速 4.5–6.5 字/秒。听不出差别时就看这几个数；实测 q1 四段：基频 225–251Hz（参考 239Hz）、LTAS 0.978–0.990、语速 5.7–6.1。
+
 ### 环境
 
 系统 Python 常常是 CPU 版 torch。有 CUDA 时，建一个继承已安装 `voxcpm` 的隔离 venv，只补 CUDA torch：
@@ -152,13 +167,14 @@ python -m venv --system-site-packages .venv-tts
 
 逐句克隆会让音色漂移。被否的版本里，45 个独立 beat 的基频中位数在 **71–154Hz**；同一 prompt/reference 生成的 4 个长段是 **100 / 103 / 100 / 98Hz**。不要为了“时间精确”逐句生成；时间精确靠后面的 ASR。
 
-1. 准备 **4–8 秒 `prompt_ref.wav`**：文本已知、低音、平稳。可以用生成的一个 beat 或干净的示例音色；把准确文本写进 `PROMPT_TEXT`。prompt + reference（同一个文件也可以）比只用 reference 更稳。
+1. 用 **4–8 秒 prompt + 更长的 reference**（同一音色）：文本必须已知，写进 `voice.json` 的 `prompt_text`；prompt + reference 比只用 reference 稳。
 2. 生成 **2–4 个长段**，每段 30–60 秒，每 2 个场景一段。同一 prompt cache、`torch.manual_seed(20)`、`cfg_value=2.0`、`inference_timesteps=10`。
-3. 不要给每段加风格前缀，除非确有必要；风格提示会改变音高。如果整体偏快，给**所有段**用同一个固定风格，或后期做轻微 `atempo`。
-4. 每段测量：基频中位数（librosa.pyin，60–350Hz）和字/秒。接受 85–115Hz、4.5–6.5 字/秒；超出范围就重生成该段，不要用变调硬拉。
-5. 长段保留，后面绝不再切。
+3. 不要给每段加风格前缀，除非确有必要；风格提示会改变音高。整体偏快就统一做 `atempo`（`voice.json` 的 `atempo` 会自动应用，原始段存 `*_raw.wav`）。
+4. 每段测量：基频中位数（librosa.pyin，60–350Hz）+ 字/秒 + 与参考的 LTAS 相关。**重点是段间稳定、与参考同音区**，不要硬套 85–115Hz（女声的 q1 在 225–251Hz 才是对的）；语速 4.5–6.5 字/秒。
+5. 跑 `check_voice.py`，PASS 再往下走；不合格先换参考片段/重生成该段，不要用变调硬拉。
+6. 长段保留，后面绝不再切。
 
-命令：`scripts/tts_chunks.py`，分别跑 `--part 0 --of 2` 和 `--part 1 --of 2`。
+命令：`scripts/tts_chunks.py`，分别跑 `--part 0 --of 2` 和 `--part 1 --of 2`；生成完跑 `python check_voice.py`。
 
 ## 阶段 3 — 连续音频与混音
 
@@ -237,6 +253,8 @@ python -m venv --system-site-packages .venv-tts
 | 现象 | 根因 | 修法 |
 |---|---|---|
 | 每隔几句音色就变 | 逐句克隆重新采样说话人 | 改 2–4 个长段；同 prompt + reference；测段基频 |
+| 克隆出来带底噪/伴奏 | 参考音频本身有 BGM | 先过 ZIP-Enhancer 去噪（`make_voice_ref.py`） |
+| 音色“说不清哪里不对” | 没量化，参考片段切在字中间 | `check_voice.py` 看段间基频极差与 LTAS；按词边界重切 |
 | 语速太快/不可信 | 7–8 字/秒、基频高 | 低音平稳 prompt，5.2–5.8 字/秒；个别句轻微 atempo，不要变调 |
 | 丢字/话没说完 | 按估算停顿逐句切音频 | 长段整体保留；ASR 对齐；绝不切 |
 | 字幕抢在句尾前切换 | 用停顿中点或按字数比例 | 用 ASR 的“下一 beat 第一个词”起点 |
@@ -248,6 +266,7 @@ python -m venv --system-site-packages .venv-tts
 | 音效削波/太响 | 音效峰值 1.0、无限幅 | 音效峰值归一 0.3；`alimiter=0.95` |
 | ASR 输出英文乱码 | 48kHz 被当成 16kHz | 先重采样到 16kHz |
 | CUDA whisper 报 `cublas64_12.dll` | ctranslate2 找不到 cuBLAS | CPU `int8` 足够；或把 torch/lib 加进 PATH |
+| 去噪报 `libtorchcodec_core4.dll` 找不到 | torchaudio 2.11 走 torchcodec，缺 shared FFmpeg DLL | `make_voice_ref.py` 已把 `torchaudio.load/save` 换成 soundfile 实现 |
 | CPU VoxCPM 慢 40 倍 | CPU 版 torch | 隔离 venv 装 CUDA torch |
 | 字体豆腐块 | WSL 没有中文字体 | 用 Windows Python + `C:\Windows\Fonts\NotoSansSC...` |
 | 图片链接全坏 | MD 指向 `assets/...` | 按文章顺序映射，逐张看图，修 `img` |
@@ -257,7 +276,7 @@ python -m venv --system-site-packages .venv-tts
 - [ ] 每张图都映射并目检过。
 - [ ] 前 3 秒有钩子；静止标题不超过 1 秒。
 - [ ] 35–50 个 beat；总长 2:45–3:30；字幕每行 ≤ 15 个中文字。
-- [ ] 2–4 个长段配音；段基频 85–115Hz；4.5–6.5 字/秒。
+- [ ] 2–4 个长段配音；段间基频极差 ≤30Hz 且落在参考 ±18%；4.5–6.5 字/秒；`check_voice.py` PASS。
 - [ ] 音频连续，没有按 beat 切；切点经 ASR 对齐。
 - [ ] 无叠化；每个镜头都在动；亚像素推拉；下划线用 bbox。
 - [ ] −16 LUFS，真峰值 ≤ −1.0dB，音效峰值 ≤ 0.3。
@@ -275,17 +294,19 @@ python -m venv --system-site-packages .venv-tts
 
 ## 脚本
 
-复制到项目里、和 `script_data.py` 放在一起。默认假设 `audio/prompt_ref.wav`、`audio/chunk_0..N.wav`、`out/`、Windows Python/ffmpeg；需要时用环境变量覆盖。
+复制到项目里、和 `script_data.py` 放在一起；`voices/` 也要一起拷（内置 q1 音色）。默认假设 `audio/chunk_0..N.wav`、`out/`、Windows Python/ffmpeg；音色优先用 `audio/prompt_ref.wav`，没有就用 `voices/<VOICE>/`。
 
-- `scripts/tts_chunks.py` — VoxCPM2 长段配音。
+- `scripts/tts_chunks.py` — VoxCPM2 长段配音（默认 q1 音色，自动套用 `voice.json` 的 atempo）。
+- `scripts/make_voice_ref.py` — 从视频/音频抽音色：词级时间戳 → 切片 → 去伴奏 → `voices/<name>/`。
+- `scripts/check_voice.py` — 量段基频/LTAS/语速，判断音色是否达标。
 - `scripts/align_asr.py` — 16kHz faster-whisper 词级对齐 → `asr_times.json`。
 - `scripts/build_audio_utils.py` — 垫乐、音效、混音、SRT、解说稿。
 - `scripts/build_audio_cont.py` — 连续音频 + 分轨 + `timeline.json`。
 - `scripts/render.py` — 竖屏渲染器（含运动/下划线修复）。
 - `scripts/qa_video.py` — CFR/解码/帧差/响度检查。
-- `scripts/project_config.py` — 共享 `EXCLUDE`。
+- `scripts/project_config.py` — 共享 `EXCLUDE`，可选 `TEMPO` / `VOICE`。
 - `scripts/ffmpeg_path.py` — 自动定位 ffmpeg/ffprobe（避开 WSL 下 `%USERNAME%` 乱码）。
 
-环境变量：`FFMPEG`、`FFPROBE`、`FONT_BOLD`、`FONT_MED`、`ASSET_DIR`（或 `render.py --assets <dir>`；WSL 不会自动透传任意环境变量，除非写进 `WSLENV`）、`VOX_MODEL`、`VOX_STEPS`、`VOX_SEED`、`VOX_CFG`、`VIDEO_BRAND`、`VIDEO_TITLE`、`VIDEO_SUBTITLE`、`VIDEO_KICKER`、`VIDEO_CREDIT`、`VIDEO_END_*`、`VIDEO_SOURCE`、`VIDEO_OUT`。
+环境变量：`FFMPEG`、`FFPROBE`、`FONT_BOLD`、`FONT_MED`、`ASSET_DIR`（或 `render.py --assets <dir>`；WSL 不会自动透传任意环境变量，除非写进 `WSLENV`）、`VOICE`、`TEMPO`、`PROMPT_WAV`、`REFERENCE_WAV`、`PROMPT_TEXT`、`VOX_MODEL`、`VOX_STEPS`、`VOX_SEED`、`VOX_CFG`、`VIDEO_BRAND`、`VIDEO_TITLE`、`VIDEO_SUBTITLE`、`VIDEO_KICKER`、`VIDEO_CREDIT`、`VIDEO_END_*`、`VIDEO_SOURCE`、`VIDEO_OUT`。
 
 当前故事的音效重点 beat 在 `build_audio_utils.py` 的 `IMPACT_IDS` / `RISER_BEFORE` 里改。
