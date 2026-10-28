@@ -1,11 +1,13 @@
 ---
 name: article-to-video
-description: 把 Markdown 文章（尤其是中文公众号文章）制作成带解说的短视频：VoxCPM2 配音、本地图片、连续长段音频、ASR 词级对齐字幕、手机优先的动态画面。适用于文章转视频、图片链接修复、音色与语速选择、9:16 竖屏或 16:9 横屏、字幕同步，以及卡顿、冻结帧、断音排查。article-to-video / MD → 视频。
+description: 把 Markdown 文章（尤其是中文公众号文章）制作成带解说的短视频：VoxCPM2 配音、本地图片、连续长段音频、ASR 词级对齐字幕、手机优先的动态画面。适用于文章转视频、参考视频剪 B-roll、图片链接修复、音色与语速选择、9:16 竖屏或 16:9 横屏、字幕同步，以及卡顿、冻结帧、断音排查。article-to-video / MD → 视频。
 ---
 
 # 文章 → 解说视频
 
-这是一套从真实公众号改稿中沉淀出来的生产流程：第一版 3:58 横屏被否，原因是“开头太静止、声音太快”；第二版 3:20 竖屏修正了节奏，但下划线压字、音色忽好忽坏；最终 3:00 版修掉了切换冻结、话没说完就切、尾音丢失。下面的规则都是踩过坑之后留下的，按顺序执行。
+这是一套从真实公众号改稿中沉淀出来的生产流程：第一版 3:58 横屏被否，原因是“开头太静止、声音太快”；第二版 3:20 竖屏修正了节奏，但下划线压字、音色忽好忽坏；最终 3:00 版修掉了切换冻结、话没说完就切、尾音丢失。后来又补了一轮：文章没有配图、只有一条英文原片时，
+从原片剪 6 段静音 B-roll（而不是全用截图），顺带修了白底图发灰、数据卡数字停在 0.3、标题数字贴边。
+下面的规则都是踩过坑之后留下的，按顺序执行。
 
 **语言约定：同等条件下优先中文。** 文档、说明、字幕、口播都用中文；代码、命令、字段名保持原文。
 
@@ -16,6 +18,8 @@ description: 把 Markdown 文章（尤其是中文公众号文章）制作成带
 - 要做手机端竖屏（视频号 / 抖音 / 朋友圈）或 16:9 横屏。
 - 已有视频出现：开头静止、语速太快/不可信、图片切换卡顿、字幕抢在话没说完前切换、尾音缺失。
 - 想用某条视频里的解说音色（“用这个声音重做”）：见阶段 2 的默认音色与 `make_voice_ref.py`。
+- 文章只有文字，但有一套参考视频（英文原片 / 发布会录像）：从原片剪 **静音 B-roll**，不要只用截图。
+- 想给一部分镜头加真实运动（蝴蝶扇翅、贴标签、走路），其余仍是静帧。
 - 需要一套可复用的流程：字幕、解说稿、质量门。
 
 ## 硬性规则
@@ -33,6 +37,11 @@ description: 把 Markdown 文章（尤其是中文公众号文章）制作成带
 11. **配图逐句判断，不要“每场景一张默认图”。** 一句讲规模、一句讲预算，却共用一张天平，观众立刻觉得“图不对文”。
 12. **第一条音轨的 1 秒内不放音效。** 音乐还在淡入时叠 impact/whoosh，就是开头一声“刺啦”。
 13. **一条主线讲透，胜过五条线各说一句。** 用户说“信息量太大/太跳跃”时，砍到一条线（2:00–2:30），而不是加速。
+14. **有参考视频就优先用动态 B-roll。** 截图 + Ken Burns 只解决“在动”，解决不了“真的在发生”。4–8 个镜头换成原片片段，只借画面、不借原声（英文人声会和中文旁白打架）。
+15. **片段不跨剪辑点、不循环、不在结尾冻结。** 按 beat 时长线性映射：素材短就自然放慢；循环会跳帧，停在末帧会被编码器判成静帧。
+16. **片段镜头不再套整帧推近。** 推近会裁掉画面边缘（水印、手部），运动交给素材本身。
+17. **白底/高亮图要按亮度自适应压暗底图。** 固定 alpha 150 会把白背景照片糊成一片灰，标题和字幕都没对比。
+18. **参考视频选段看精确时间码 + 剪辑点，不要按缩略图序号猜。** 1fps 缩略图的序号和真实秒数会差半拍，很容易把“指尖捏着标签”剪成“研究员对镜头说话”。
 
 ## 新项目脚手架
 
@@ -48,7 +57,7 @@ cp "$SKILL"/scripts/script_data_template.py "$PROJ"/script_data.py
 
 然后：
 
-1. 改 `script_data.py`（场景、beat、`img` 文件名）。
+1. 改 `script_data.py`（场景、beat、`img` 文件名；要动态片段时写 `VIDEO_SRC` / `CLIP_SRC` 并在 beat 第 9 位标 `True`）。
 2. 选音色：默认用内置 `voices/q1`（女声，已去伴奏），直接就能配音；要换音色用 `make_voice_ref.py`，或把 4–8 秒的 `audio/prompt_ref.wav` 放进项目（项目内的会覆盖内置音色）。
 3. 改 `project_config.py` 的 `EXCLUDE`；配音、对齐、构建三个脚本共用这一份，保持一致。
 4. 如果图片不在项目目录，设置 `ASSET_DIR`，或渲染时传 `--assets <dir>`。
@@ -59,7 +68,7 @@ cp "$SKILL"/scripts/script_data_template.py "$PROJ"/script_data.py
 
 | 阶段 | 产出 | 通过标准 |
 |---|---|---|
-| 0 素材 | 图片映射、画幅决策 | 每张图都看过并匹配段落 |
+| 0 素材 | 图片映射、参考视频镜头区间、画幅决策 | 每张图/每段都看过并匹配段落 |
 | 1 脚本 | `script_data.py`，35–50 个 beat | 前 3 秒有钩子；总长 2:45–3:30 |
 | 2 配音 | 2–4 个长段 WAV | `check_voice.py` PASS：段间基频极差 ≤30Hz、LTAS ≥0.90、语速 4.0–7.5 字/秒 |
 | 2.5 清理 | `clean_audio.py` 处理过的长段 | 段首无瞬态、长停顿 ≤0.55s、语速统一 |
@@ -68,7 +77,7 @@ cp "$SKILL"/scripts/script_data_template.py "$PROJ"/script_data.py
 | 5 渲染 | 1080×1920 或 1920×1080 MP4 | 每个镜头都在动，无叠化，配图逐句对得上 |
 | 6 QA | 自动报告、截图、README | CFR、解码干净、无冻结窗口 |
 
-## 阶段 0 — 素材与图片
+## 阶段 0 — 素材与图片（含参考视频）
 
 1. 完整读一遍 Markdown，整理标题、章节、金句、数字、图片出现顺序。
 2. **按文章顺序修图片链接，然后逐张打开确认。** 典型坏链接是 `assets/<文章标题>/file-*.png`，真实图片在文章目录。把第 n 张图映射到本地第 n 个 PNG，但一定要看图片内容是否匹配相邻段落，不能只看文件名。
@@ -77,6 +86,22 @@ cp "$SKILL"/scripts/script_data_template.py "$PROJ"/script_data.py
    - **9:16，1080×1920**：手机优先、视频号、抖音。用户说“普通手机用户”“划走”时默认竖屏。
    - **16:9，1920×1080**：只在文章内嵌播放器或用户明确要横屏时使用。
 5. 每个版本单独建项目目录；图片可只读引用，不能覆盖旧版本。
+
+**如果文章没有配图，但有一套参考视频：**
+
+1. 先跑 `python video_sheet.py --video ../03/01.mp4`：输出逐秒缩略图（带精确时间码）、
+   剪辑点、镜头区间。挑片段只在这个区间表里选。
+2. 选 **4–8 段、每段 2–6 秒**、内容真的对得上台词的镜头（贴标签的手指、扇翅的蝴蝶、
+   举网的人、被啃过的乳草叶子）。宁少勿滥；其余镜头继续用静帧或数据/文字卡。
+3. 每段都**亲眼看帧确认内容**（`ffmpeg -ss <秒> -i 01.mp4 -frames:v 1 x.png`）。
+   不要相信文件名，也不要相信缩略图序号。
+4. 在 `script_data.py` 写 `VIDEO_SRC` 与 `CLIP_SRC = {"beat_id": (起点, 终点)}`，
+   并在该 beat 元组第 9 位标 `True`。
+5. `python make_clips.py` 切出 `clips/<beat_id>/`（1080×608、30fps、JPEG 帧序列 + `meta.json`）。
+6. 预览 `python render.py preview <片段时刻>`，确认内容对、边缘没被推近裁掉。
+
+片段只当画面：原片人声一律不用，音轨仍是中文旁白 + 垫乐。16:9 片段正好铺满 1080×608 卡片；
+源片只有 854×480 也可以，lanczos + 轻度 unsharp（0.45）升采样，配上真实运动比静帧耐看。
 
 **项目结构**
 
@@ -88,10 +113,13 @@ project/
   build_audio_utils.py    # 垫乐、音效、混音、SRT、解说稿
   build_audio_cont.py     # 连续音频 + 时间轴
   render.py               # 竖屏/横屏画面渲染
+  make_clips.py           # 参考视频 -> clips/ 帧序列
+  video_sheet.py          # 参考视频缩略图 + 剪辑点 + 镜头区间
   qa_video.py             # 自动检查
   make_voice_ref.py       # 从视频/音频抽音色（切片 + 去伴奏）
   check_voice.py          # 量音色/语速是否达标
   voices/q1/              # 内置音色：prompt_ref.wav + reference_ref.wav + voice.json
+  clips/<beat_id>/        # 动态 B-roll：f_0001.jpg ... + meta.json
   audio/
     prompt_ref.wav        # 可选：项目自定义音色（覆盖内置）
     chunk_0..N.wav        # 长段配音
@@ -235,6 +263,7 @@ python check_voice.py            # 基频/LTAS/语速门禁
 - 顶部 4–6px 进度条；左上章节标签在 y≈75；右上小品牌名。
 - 大字区在 y≈220–500：eyebrow 27px，主关键词 90–170px（自动缩到 960px 宽），下划线用 `textbbox`。
 - 图片卡：全宽 1080×608，y≈540；同一张图做模糊、压暗后铺满 1920 背景。
+  卡片内图片按比例 **contain**（16:9 正好铺满；竖图两侧用同一张图模糊压暗填底），不拉变形、不裁掉图上说明文字。
 - 字幕：64px 加粗，最多 2 行，居中在 y≈1400–1550，黑色描边 8px，后面加暗色 scrim。
 - 安全区：左右留 60px；避开底部 250px、右侧 120px 的平台 UI。
 
@@ -245,6 +274,14 @@ python check_voice.py            # 基频/LTAS/语速门禁
 - 亚像素采样：`Image.transform(..., Image.AFFINE, ...)`，用浮点缩放/位移。整数 `crop().resize()` 会每隔几帧跳 1px，产生微抖。
 - **硬切，不叠化。** 叠化会让两行大字双重曝光，看起来像故障。切点用 whoosh 盖住。
 - 文字/数据卡：整个画面缓慢推近（每场景约 7.5%）+ 低透明度光扫。否则编码器会跳过相同帧，卡片就冻住了。
+- **动态片段镜头**：`idx = lt / duration * frames` 按 beat 进度取帧，不循环、不冻结；
+  这些镜头跳过整帧 `slow_zoom`，免得把画面边缘（水印、手）裁掉。
+- **底图压暗按亮度自适应**：`alpha = clamp(150 + (mean − 55) × 1.15, 150, 215)`。
+  白底照片用固定 150 会整屏发灰，标题和字幕都没对比。
+- **数据卡 count-up 压到 0.55 秒**：1.1 秒的动画放在 1.18 秒的镜头上，观众几乎整段看到“0.3 克”。
+- **标题卡装饰数字按长度自动缩**：`getlength > 640` 就减字号；230px 的 “0.5g” 会贴右边缘被裁。
+- **结尾卡从 `speech_end` 触发**：`build_audio_cont` 把最后一个 beat 的 end 设成总时长，
+  用 `last["end"]` 判断等于永远不会出现。
 - 不要在每次切换做 punch-in，也不要白闪；这两个都会放大“顿一下”的感觉。
 - 下划线：
 
@@ -253,12 +290,12 @@ python check_voice.py            # 基频/LTAS/语速门禁
   y_line = bbox[3] + 16
   ```
 
-- 纯文字版式：画字前先加暗色 scrim（alpha≈125），避免浅色图片把字洗掉。
+- 纯文字版式：底图偏亮时加暗色 scrim；压暗量按底图平均亮度算，深色底图不要硬加（会发灰）。
 - 字体用 `C:\Windows\Fonts` 下的 `Noto Sans SC Bold` / `Medium`，传完整 `.otf` 路径（含空格）。
 
 **配图规则（本轮返工两次）：**
 
-- 逐句判断，只在这句话和图片内容真的对得上时才配图（`script_data.py` 里的 `BEAT_IMG` 逐 beat 覆盖，`""` 表示不用图）。
+- 逐句判断，只在这句话和图片内容真的对得上时才配图（`script_data.py` 每个 beat 的第 7 位单独指定，`None` 表示不用图）。
 - 原文配图通常自带中文标题（“资本流向，决定岗位边界”“工具贬值快于人成长”）；如果图上文字和这句语义相反，就不要配这张图（例：讲“过去能顶四五年”却配“工具贬值快”）。
 - 一个 30 多镜头的视频，**一半有图、一半是数据/文字卡**是正常的；宁可少配图，也不要每场景套同一张默认图。
 - 配图没法自动判语义，但可以自动拼图：`python contact_sheet.py --video out/xxx.mp4` 生成 `out/配图对照.png`，一眼扫完 30 多个镜头。
@@ -279,6 +316,7 @@ python check_voice.py            # 基频/LTAS/语速门禁
 - 看钩子、切点、文字卡、下划线修正、结尾卡这几帧。
 - 在 2–3 个边界对照字幕和语音；上一句字幕必须保留到下一句开口。
 - 听一遍边界附近，确认没有丢字。
+- 有动态片段时，每个片段抽两帧确认内容与运动，并确认没有混进原片人声。
 - 确认旧版本还在，README 里有链接。
 
 交付：MP4、SRT、带时间码的解说稿、写清重跑命令的 README，以及一段话说明音色/画幅选择。
@@ -311,6 +349,13 @@ python check_voice.py            # 基频/LTAS/语速门禁
 | 配图和内容不搭 | 每场景一张默认图 | `BEAT_IMG` 逐句覆盖；对不上就不配图，用数据/文字卡 |
 | 音色一段一变 | 长段生成方差，段间基频可差 40Hz | `regen_chunk.py` 换种子重生成偏差段；`check_voice.py` 把关 |
 | 切点比开口早/晚半拍 | whisper 词起点误差 + 长段空白 | `snap_to_onsets` 吸附到真实开口（容差 0.55s，单调约束 0.4s） |
+| 白底照片整屏发灰、字没对比 | 底图固定 alpha 150 | 按底图平均亮度自适应压暗（150–215） |
+| 数据卡数字停在 0.3 | count-up 1.1s 比镜头 1.18s 还长 | 动画压到 ≤0.55s |
+| 标题装饰数字被裁 | 字号写死 230px / 420px | 按 `textlength` 自动缩到 ≤640px |
+| 片段剪出来是“对镜头说话” | 按缩略图序号猜时间，跨了剪辑点 | `video_sheet.py` 看精确时间码与镜头区间；每段先抽帧确认 |
+| 片段结尾跳一下/冻住 | 素材比 beat 短，循环或停在末帧 | 按 beat 时长线性映射，短则放慢 |
+| 片段边缘水印被裁 | 片段镜头又套了整帧推近 | 片段镜头跳过 `slow_zoom` |
+| 结尾卡一直不出现 | 触发条件用了 `last["end"]`（= 总时长） | 改用 timeline 的 `speech_end` |
 
 ## 完成标准
 
@@ -326,6 +371,8 @@ python check_voice.py            # 基频/LTAS/语速门禁
 - [ ] SRT + 解说稿 + README；旧版本保留。
 - [ ] `check_audio.py` PASS：开头无瞬态、无爆音、最长停顿 ≤0.65s、切点=开口（±0.15s）。
 - [ ] `contact_sheet.py` 生成对照图，逐镜头看过配图是否对得上。
+- [ ] 动态片段：每段都抽帧看过内容；不跨剪辑点；不循环/冻结；原片人声没混进来。
+- [ ] 白底图/标题/数据卡：底图不发灰，数字动画在镜头结束前到位。
 - [ ] 在手机尺寸播放器上实际看过一遍。
 
 ## 详细参考
@@ -347,13 +394,15 @@ python check_voice.py            # 基频/LTAS/语速门禁
 - `scripts/align_asr.py` — 16kHz faster-whisper 词级对齐 → `asr_times.json`。
 - `scripts/build_audio_utils.py` — 垫乐、音效、混音、SRT、解说稿。
 - `scripts/build_audio_cont.py` — 连续音频 + 分轨 + `timeline.json`；切点吸附到开口。
-- `scripts/render.py` — 竖屏渲染器（含运动/下划线修复）。
+- `scripts/render.py` — 竖屏渲染器（静帧推近 + 动态 B-roll + 自适应压暗 + 下划线修复）。
+- `scripts/make_clips.py` — 参考视频 → `clips/<beat_id>/` 帧序列（按 beat 时长映射）。
+- `scripts/video_sheet.py` — 参考视频逐秒缩略图 + 剪辑点 + 镜头区间。
 - `scripts/qa_video.py` — CFR/解码/帧差/响度检查。
 - `scripts/check_audio.py` — 声音门禁：开头瞬态/爆音/长停顿/切点对齐/响度。
 - `scripts/contact_sheet.py` — 按镜头抽帧拼成 `配图对照.png`，人工核对配图。
 - `scripts/project_config.py` — 共享 `EXCLUDE`，可选 `TEMPO` / `VOICE`。
 - `scripts/ffmpeg_path.py` — 自动定位 ffmpeg/ffprobe（避开 WSL 下 `%USERNAME%` 乱码）。
 
-环境变量：`FFMPEG`、`FFPROBE`、`FONT_BOLD`、`FONT_MED`、`ASSET_DIR`（或 `render.py --assets <dir>`；WSL 不会自动透传任意环境变量，除非写进 `WSLENV`）、`VOICE`、`TEMPO`、`PROMPT_WAV`、`REFERENCE_WAV`、`PROMPT_TEXT`、`VOX_MODEL`、`VOX_STEPS`、`VOX_SEED`、`VOX_CFG`、`VIDEO_BRAND`、`VIDEO_TITLE`、`VIDEO_SUBTITLE`、`VIDEO_KICKER`、`VIDEO_CREDIT`、`VIDEO_END_*`、`VIDEO_SOURCE`、`VIDEO_OUT`。
+环境变量：`FFMPEG`、`FFPROBE`、`FONT_BOLD`、`FONT_MED`、`ASSET_DIR`（或 `render.py --assets <dir>`；WSL 不会自动透传任意环境变量，除非写进 `WSLENV`）、`VOICE`、`TEMPO`、`PROMPT_WAV`、`REFERENCE_WAV`、`PROMPT_TEXT`、`VOX_MODEL`、`VOX_STEPS`、`VOX_SEED`、`VOX_CFG`、`VIDEO_BRAND`、`VIDEO_TITLE`、`VIDEO_SUBTITLE`、`VIDEO_KICKER`、`VIDEO_CREDIT`、`VIDEO_END_*`、`VIDEO_SOURCE`、`VIDEO_TITLE_GHOST`、`VIDEO_DATA_SOURCE`、`VIDEO_OUT`、`SOURCE_VIDEO`（参考视频路径，优先于 `script_data.VIDEO_SRC`）。
 
 当前故事的音效重点 beat 在 `build_audio_utils.py` 的 `IMPACT_IDS` / `RISER_BEFORE` 里改。

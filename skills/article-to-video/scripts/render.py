@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
-"""1080×1920 竖屏：动态大字、模糊底图、30fps。"""
+"""1080×1920 竖屏：动态大字、模糊底图、30fps。
+
+支持两种图片镜头：
+  - 静帧（img）：整图铺满卡片，整帧慢推近 + 光扫；
+  - 动态 B-roll（clip）：读 clips/<beat_id>/ 的帧序列，按 beat 时长线性播放。
+"""
 import bisect
 import json
+import re
 import os
 import subprocess
 import sys
@@ -9,7 +15,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from ffmpeg_path import ffmpeg as _ffmpeg
 
@@ -31,12 +37,14 @@ BRAND = os.environ.get("VIDEO_BRAND", "AI 失控 11 天")
 TITLE_MAIN = os.environ.get("VIDEO_TITLE", "AI 失控 11 天")
 TITLE_SUB = os.environ.get("VIDEO_SUBTITLE", "不毁灭世界，只想查清哪个门人多")
 TITLE_KICKER = os.environ.get("VIDEO_KICKER", "真实事件 · 一份 AI 安全报告")
+TITLE_GHOST = os.environ.get("VIDEO_TITLE_GHOST", "11")   # 标题卡右上角的装饰数字
 TITLE_CREDIT = os.environ.get("VIDEO_CREDIT", "AI 配音：VoxCPM2")
 END_L1 = os.environ.get("VIDEO_END_1", "有些事，人类早忘了")
 END_L2 = os.environ.get("VIDEO_END_2", "AI 还在较真")
 END_Q = os.environ.get("VIDEO_END_Q", "你猜，它下一个执念会是什么？")
 END_CTA = os.environ.get("VIDEO_END_CTA", "你怎么看？评论区聊聊")
 END_SOURCE = os.environ.get("VIDEO_SOURCE", "资料来源：Swarmcha.se 报告 / 腾讯方面回应")
+DATA_SOURCE = os.environ.get("VIDEO_DATA_SOURCE", "数据来自公开资料")
 
 WHITE = (247, 248, 250)
 MUTED = (158, 167, 180)
@@ -105,15 +113,36 @@ def bg_for(img):
         x0 = (big.width - W) // 2
         y0 = (big.height - H) // 2
         crop = big.crop((x0, y0, x0 + W, y0 + H)).filter(ImageFilter.GaussianBlur(26))
-        dark = Image.new("RGBA", (W, H), (4, 6, 10, 150))
+        # 按底图平均亮度加深：白底照片（如白背景蝴蝶）用 150 会糊成一片灰，字也没对比
+        mean = float(np.asarray(crop.resize((90, 160), Image.BILINEAR), dtype=np.float32).mean())
+        alpha = int(min(215, max(150, 150 + (mean - 55) * 1.15)))
+        dark = Image.new("RGBA", (W, H), (4, 6, 10, alpha))
         _BG[img] = Image.alpha_composite(crop.convert("RGBA"), dark).convert("RGB")
     return _BG[img]
 
 
+_BG_MEAN = {}
+
+
+def bg_mean(img):
+    key = img or "__gradient__"
+    if key not in _BG_MEAN:
+        src = bg_for(img) if img else BG
+        small = src.resize((120, 213), Image.BILINEAR)
+        arr = np.asarray(small, dtype=np.float32)
+        _BG_MEAN[key] = float(arr.mean())
+    return _BG_MEAN[key]
+
+
 def fg_for(img):
+    """只做尺寸上限，不强行拉成 16:9；竖图/方图交回 image_card 按比例摆放。"""
     if img not in _FG:
         src = Image.open(ROOT / img).convert("RGB")
-        _FG[img] = src.resize((1600, 900), Image.LANCZOS)
+        scale = min(1.0, 1600 / max(1, src.width), 900 / max(1, src.height))
+        if scale < 1.0:
+            src = src.resize((max(1, int(src.width * scale)),
+                              max(1, int(src.height * scale))), Image.LANCZOS)
+        _FG[img] = src
     return _FG[img]
 
 
@@ -200,7 +229,8 @@ def draw_text_layout(frame, b, lt):
         d.text((60, 600), eye, font=font(28, False), fill=ac)
         d.rectangle([60, 642, 96, 646], fill=ac)
     big = b.get("big") or ""
-    f, size = fit_big(big, start=132, min_size=64, maxw=960)
+    start = 200 if len(big) <= 4 else 172 if len(big) <= 6 else 140
+    f, size = fit_big(big, start=start, min_size=64, maxw=960)
     y = 690 + int(12 * (1 - ease_out(lt / 0.28)))
     d.text((63, y + 4), big, font=f, fill=(0, 0, 0))
     d.text((60, y), big, font=f, fill=ac)
@@ -211,29 +241,53 @@ def draw_text_layout(frame, b, lt):
         d.rectangle([60, ly, 60 + w, ly + 8], fill=ac)
 
 
-def image_card(frame, b, lt, y=540, h=608, zoom_max=0.10, duration=None):
-    prog = min(1.0, max(0.0, lt / max(0.4, duration or b["duration"])))
-    v = sum(int(c) for c in b["id"] if c.isdigit()) % 3
-    if b["layout"] == "hook":
-        base, zm, cx0, cy0 = 1.008, 0.14, 800.0, 450.0
-    elif v == 0:
-        base, zm, cx0, cy0 = 1.008, 0.10, 800.0, 450.0
-    elif v == 1:
-        base, zm, cx0, cy0 = 1.10, 0.05, 665.0, 470.0
-    else:
-        base, zm, cx0, cy0 = 1.14, 0.05, 950.0, 430.0
-    zoom = base + zm * prog
-    src = fg_for(b["img"])
-    sw, sh = 1600.0 / zoom, 900.0 / zoom
-    cx, cy = cx0 + 20.0 * (prog - 0.5), cy0 + 8.0 * (prog - 0.5)
-    x0 = min(max(0.0, cx - sw / 2), 1600.0 - sw)
-    y0 = min(max(0.0, cy - sh / 2), 900.0 - sh)
-    sx, sy = sw / W, sh / h
-    crop = src.transform((W, h), Image.AFFINE, (sx, 0, x0, 0, sy, y0), resample=Image.BILINEAR)
-    frame.paste(crop, (0, y))
+CLIPS = BASE / "clips"
+_CLIP_META = {}
+
+
+def clip_meta(cid):
+    if cid not in _CLIP_META:
+        _CLIP_META[cid] = json.loads(
+            (CLIPS / cid / "meta.json").read_text(encoding="utf-8"))
+    return _CLIP_META[cid]
+
+
+def clip_card(frame, b, lt, y=540, h=608):
+    """把原片镜头按 beat 时长线性铺进图片卡（静音 B-roll）。
+
+    不做循环、不在结尾冻结：整段素材按 beat 时长映射，短素材自然放慢，
+    每帧都在动。推近交给素材本身，所以这个镜头不再套整帧 slow_zoom。
+    """
+    cid = b["clip"]
+    meta = clip_meta(cid)
+    n = int(meta["frames"])
+    dur = max(0.2, float(b.get("duration") or 1.0))
+    idx = int(min(n - 1, max(0.0, lt / dur) * n)) + 1
+    im = Image.open(CLIPS / cid / f"f_{idx:04d}.jpg").convert("RGB")
+    if im.size != (W, h):
+        im = im.resize((W, h), Image.LANCZOS)
+    frame.paste(im, (0, y))
     d = ImageDraw.Draw(frame)
     d.rectangle([0, y, W, y + 3], fill=accent(b))
-    # dim bottom for caption separation
+    return frame
+
+
+def image_card(frame, b, lt, y=540, h=608, zoom_max=0.10, duration=None):
+    """整图按比例放进卡片：不裁切、不拉变形，保留图片自带说明文字。
+
+    16:9 素材正好铺满；竖图/方图按 contain 摆中间，空白处用同一张图放大压暗填底。
+    运动交给整帧 slow_zoom + 光扫，避免把图上文字切掉。
+    """
+    src = fg_for(b["img"])
+    scale = min(W / src.width, h / src.height)
+    nw, nh = max(1, int(round(src.width * scale))), max(1, int(round(src.height * scale)))
+    if (nw, nh) != (W, h):
+        cover = ImageOps.fit(src, (W, h), method=Image.LANCZOS).filter(ImageFilter.GaussianBlur(16))
+        shade = Image.new("RGBA", (W, h), (0, 0, 0, 130))
+        frame.paste(Image.alpha_composite(cover.convert("RGBA"), shade).convert("RGB"), (0, y))
+    frame.paste(src.resize((nw, nh), Image.LANCZOS), ((W - nw) // 2, y + (h - nh) // 2))
+    d = ImageDraw.Draw(frame)
+    d.rectangle([0, y, W, y + 3], fill=accent(b))
     return frame
 
 
@@ -266,7 +320,7 @@ def light_sweep(frame, prog):
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(ov)
     x = int(-420 + (W + 900) * max(0.0, min(1.0, prog)))
-    d.polygon([(x, 0), (x + 240, 0), (x - 220, H), (x - 500, H)], fill=(95, 175, 225, 13))
+    d.polygon([(x, 0), (x + 240, 0), (x - 220, H), (x - 500, H)], fill=(95, 175, 225, 9))
     return Image.alpha_composite(frame.convert("RGBA"), ov).convert("RGB")
 
 
@@ -283,51 +337,89 @@ def beat_frame(b, lt, t, vis_dur=None):
         frame = bg_for(img).copy()
     else:
         frame = BG.copy()
-    if b["layout"] in ("card", "hook", "full") and img:
+    has_clip = bool(b.get("clip")) and (CLIPS / b["clip"] / "meta.json").exists()
+    if has_clip:
+        clip_card(frame, b, lt, y=540 if b["layout"] != "full" else 470,
+                  h=608 if b["layout"] != "full" else 760)
+    elif b["layout"] in ("card", "hook", "full") and img:
         image_card(frame, b, lt, y=540 if b["layout"] != "full" else 470,
                    h=608 if b["layout"] != "full" else 760,
-                   zoom_max=0.14 if b["layout"] == "hook" else 0.10,
                    duration=vis_dur)
     if b["layout"] == "text":
-        dark = Image.new("RGBA", (W, H), (3, 5, 9, 125))
-        frame = Image.alpha_composite(frame.convert("RGBA"), dark).convert("RGB")
+        # 只在底图偏亮时压暗；深色底图再加 scrim 只会让画面发灰
+        mean = bg_mean(img)
+        alpha = int(min(140, max(0, (mean - 42) * 2.6)))
+        if alpha:
+            dark = Image.new("RGBA", (W, H), (3, 5, 9, alpha))
+            frame = Image.alpha_composite(frame.convert("RGBA"), dark).convert("RGB")
     if b["layout"] == "data":
         draw_data(frame, b, lt)
     else:
         draw_big(frame, b, lt)
+    # 每个镜头单独做一次线性推近 + 光扫：按 beat 计时，切镜头时重置
+    # （按场景计时会摊到 20–30 秒上，每帧只动 0.0001，看起来就是静止画面）
+    prog = (t - b["start"]) / max(0.9, b["end"] - b["start"])
+    if not has_clip:
+        # 静帧/文字/数据卡的移动靠整帧线性推近；片段镜头自己就在动，不再裁边
+        amt = 0.05 if b["layout"] in ("text", "data") else 0.035
+        frame = slow_zoom(frame, prog, amt)
+    frame = light_sweep(frame, prog)
     draw_caption(frame, b, t)
-    if b["layout"] in ("text", "data"):
-        sc = SCENES[b["scene"]]
-        prog = (t - sc["start"]) / max(0.9, sc["end"] - sc["start"])
-        frame = slow_zoom(frame, prog, 0.075)
-        frame = light_sweep(frame, prog)
     return frame
 
 
 def draw_data(frame, b, lt):
+    """通用数据卡：主数字 count-up + 说明行 + 展开的强调线，整块上下居中。"""
     d = ImageDraw.Draw(frame)
     ac = accent(b)
-    d.text((60, 200), "数字对不上", font=font(30, False), fill=MUTED)
-    d.rectangle([60, 246, 96, 250], fill=ac)
-    # labels + count up
-    p = smooth(min(1, lt / 1.2))
-    n1 = int(35300 * p); n2 = int(2818 * p)
-    d.text((58, 360), f"{n1:,}", font=font(168), fill=ORANGE)
-    d.text((62, 610), "次网络请求 · Swarmcha.se 报告", font=font(34, False), fill=(214, 219, 228))
-    d.text((58, 720), f"{n2:,}", font=font(150), fill=CYAN)
-    d.text((62, 952), "次访问尝试 · 腾讯方面回应", font=font(34, False), fill=(214, 219, 228))
-    big = b.get("big")
-    if big:
-        f, size = fit_big(big, start=86, min_size=60, maxw=940)
-        d.text((60, 1040), big, font=f, fill=WHITE)
-    d.text((60, 1160), "统计口径不同，不能当作无争议定论", font=font(28, False), fill=(196, 160, 118))
+
+    big = b.get("big") or ""
+    m = re.match(r"^([0-9][0-9,]*(?:\.[0-9]+)?)(.*)$", big)
+    animatable = bool(m) and not re.search(r"\d", m.group(2))
+    p = smooth(min(1.0, lt / 0.55))
+    if animatable:
+        raw, suffix = m.group(1), m.group(2)
+        target = float(raw.replace(",", ""))
+        cur = target * p
+        shown = f"{cur:.1f}" if "." in raw else f"{int(round(cur))}"
+        text = shown + suffix
+    else:
+        text = big
+
+    f, size = fit_big(text, start=200, min_size=88, maxw=940)
+    note = b.get("note") or ""
+    bbox0 = d.textbbox((0, 0), text, font=f)
+    num_h = bbox0[3] - bbox0[1]
+    eye_h = 48
+    note_h = 56 if note else 0
+    block = eye_h + 18 + num_h + (note_h + 26 if note else 0) + 46 + 34
+    top = 260 + max(0, int((820 - block) / 2))
+
+    label = b.get("eyebrow") or "关键数字"
+    d.text((60, top), label, font=font(32, False), fill=MUTED)
+    d.rectangle([60, top + 42, 96, top + 46], fill=ac)
+
+    ny = top + eye_h + 18
+    d.text((62, ny), text, font=f, fill=ac)
+    y = ny + bbox0[3]
+    if note:
+        d.text((62, y + 18), note, font=font(36, False), fill=(214, 219, 228))
+        y += 18 + note_h
+    w = int(360 * ease_out(lt / 0.6))
+    if w:
+        d.rectangle([62, y + 26, 62 + w, y + 32], fill=ac)
+    d.text((60, y + 46), DATA_SOURCE, font=font(28, False), fill=(140, 150, 166))
 
 
 def title_card(t):
     frame = BG.copy()
     d = ImageDraw.Draw(frame)
     p = ease_out(min(1, t / 0.35))
-    d.text((W - 60, 250), "11", font=font(420), fill=(18, 25, 36),
+    # 装饰数字按长度自动缩：230px 的 "0.5g" 会贴右边缘被裁
+    gsize = 420
+    while gsize > 120 and font(gsize).getlength(TITLE_GHOST) > 640:
+        gsize -= 20
+    d.text((W - 72, 240), TITLE_GHOST, font=font(gsize), fill=(18, 25, 36),
            stroke_width=2, stroke_fill=(95, 48, 26), anchor="ra")
     y = 720 + int(24 * (1 - p))
     d.text((66, y + 5), TITLE_MAIN, font=font(112), fill=(0, 0, 0))
@@ -355,20 +447,26 @@ def endcard():
 
 def frame_at(t, total):
     if t < 1.0:
-        return title_card(t)
+        fr = title_card(t)
+        fr = slow_zoom(fr, t, 0.05)
+        return light_sweep(fr, t)
+
+    # 结尾卡从旁白结束（speech_end）开始：build_audio_cont 把最后一个 beat
+    # 的 end 设成总时长，用 last["end"] 触发等于永远不会出现
+    END_AT = float(TIMELINE.get("speech_end") or BEATS[-1]["end"])
+    if t > END_AT:
+        # 硬切到结尾卡（不做叠化），结尾卡同样保持缓慢推近 + 光扫
+        span = max(0.6, total - END_AT)
+        prog = min(1.0, (t - END_AT) / span)
+        fr = endcard()
+        fr = slow_zoom(fr, prog, 0.05)
+        return light_sweep(fr, prog)
+
     i = max(0, bisect.bisect_right(STARTS, t) - 1)
     b = BEATS[i]
     nxt = BEATS[i + 1]["start"] if i + 1 < len(BEATS) else TIMELINE["duration"]
     vis = max(0.9, nxt - b["start"])
     frame = beat_frame(b, t - b["start"], t, vis)
-    # endcard
-    last = BEATS[-1]
-    if t > last["end"]:
-        a = ease_out((t - last["end"]) / 0.7)
-        if a >= 1:
-            frame = endcard()
-        else:
-            frame = Image.blend(frame, endcard(), a)
     header(frame, scene_label_for(i))
     progress(frame, t, total)
     return frame

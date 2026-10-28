@@ -68,7 +68,15 @@ Pillow 可以直接加载带空格的 `.otf` 路径。不要依赖 fontconfig。
 - Python `subprocess` 能处理中文用户名；`ls`/`tasklist` 里可能显示乱码，但路径本身能解析。
 - Windows 路径用原始字符串传（`r"D:\project\out"`）；不要在 WSL 里 `cd` 到 Windows 风格路径。
 - 当前工作目录和 DSH checkout 无关；不要从 checkout 位置推断项目路径。
-- 磁盘：3 分钟、1080×1920、CRF 18–20 的成片约 40–60MB；中间文件（口播/音乐/音效分轨）再加约 100MB。
+- 磁盘：3 分钟、1080×1920、CRF 18–20 的成片约 40–60MB；中间文件（口播/音乐/音效分轨）再加约 100MB；
+  有动态 B-roll 时 `clips/` 再加约 40MB。
+- **从 WSL 调 Windows Python 时，环境变量不会自动透传**（Win32 进程默认只拿 `WSLENV` 白名单）。
+  `VIDEO_OUT=xxx.mp4 python.exe render.py` 实测被忽略，成片写进了默认文件名。改脚本默认值，
+  或把变量写进 `WSLENV`。
+- **WSL 里调 Windows ffmpeg，输出路径必须是 Windows 路径**：`ffmpeg ... "$(wslpath -w out/x.mp4)"`，
+  否则报 `Could not open file`。用 Windows Python 跑脚本时则直接用 `D:\...` 或相对路径。
+- `.agents/skills/...` 在 Windows 侧可能是 WSL 符号链接，Windows Python 读不到（`WinError 1920`）；
+  要测试 skill 脚本，先复制到普通目录（如 `_skilltest/`）再跑。
 
 ## torchcodec / ZIP-Enhancer
 

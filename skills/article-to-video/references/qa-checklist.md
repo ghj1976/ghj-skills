@@ -73,3 +73,26 @@ done
 
 实测一次失败案例：切点比开口早 0.22–0.52s（`scene.start` 被接成上一节 end，跨过了长段空白），
 以及 1.0s 的句内长停顿没被清掉（停顿被 60ms 气口切成两段，阈值 −45dB 检测不到）。
+
+## 动态 B-roll 检查（项目里有 `clips/` 时）
+
+自动：
+
+```bash
+# 片段内“真的在动”：同一条片段相隔 0.5–1 秒取两帧，平均绝对差应 >0.005
+ffmpeg -v error -ss 18.2 -i out/final.mp4 -frames:v 1 out/still/c1.png
+ffmpeg -v error -ss 18.8 -i out/final.mp4 -frames:v 1 out/still/c2.png
+python -c "from PIL import Image; import numpy as np; \
+a=np.asarray(Image.open('out/still/c1.png'),float); b=np.asarray(Image.open('out/still/c2.png'),float); \
+print(np.abs(a-b).mean()/255)"
+```
+
+- [ ] 每个片段都抽帧看过：内容对得上这句字幕（不是“研究员对镜头说话”被当成“贴标签”）。
+- [ ] 片段没有跨原片剪辑点（没有中途跳镜）。
+- [ ] 片段内没有循环跳帧、没有停在末帧；短素材是整体放慢，不是硬撑。
+- [ ] 片段边缘没有裁掉水印、手指或关键画面（片段镜头不套整帧推近）。
+- [ ] 原片人声没有混进音轨；听的仍是中文旁白 + 垫乐。
+- [ ] 白底/高亮图铺底后不发灰；标题、字幕对比正常。
+- [ ] 数据卡数字在镜头结束前到达目标值（`0.5 克` 不能停在 `0.3 克`）。
+- [ ] 标题装饰数字没有贴边被裁。
+- [ ] 结尾卡在旁白结束后出现，来源和互动引导完整。

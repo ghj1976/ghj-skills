@@ -131,6 +131,7 @@ def main():
                 "id": b["id"], "scene": b["scene"], "text": b["text"], "sub": b["sub"],
                 "big": b["big"], "layout": b["layout"], "accent": b["accent"],
                 "eyebrow": b["eyebrow"], "img": b["img"],
+                "note": b.get("note", ""), "clip": b.get("clip", ""),
                 "start": round(st, 4), "end": round(en, 4), "duration": round(en - st, 4),
             })
 
