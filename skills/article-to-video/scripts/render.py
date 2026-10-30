@@ -196,15 +196,29 @@ def fit_big(text, start=170, min_size=62, maxw=960):
     return font(size), size
 
 
+EYE_GAP = 13          # 小标签下划线与字形的间距（写死 top+42 时正好压在字底）
+EYE_W, EYE_H_ = 36, 4
+
+
+def draw_eyebrow(d, x, y, text, size, color, ac, gap=EYE_GAP, upper=False):
+    """小标签 + 下划线。线按字形 bbox 下移 gap 像素画，不按字号估算。"""
+    t = text.upper() if upper else text
+    if not t:
+        return None
+    f = font(size, False)
+    d.text((x, y), t, font=f, fill=color)
+    bb = d.textbbox((x, y), t, font=f)
+    ly = bb[3] + gap
+    d.rectangle([x, ly, x + EYE_W, ly + EYE_H_], fill=ac)
+    return ly
+
+
 def draw_big(frame, b, lt):
     if b["layout"] == "text":
         return draw_text_layout(frame, b, lt)
     d = ImageDraw.Draw(frame)
     ac = accent(b)
-    eye = b.get("eyebrow") or ""
-    if eye:
-        d.text((60, 214), eye.upper(), font=font(27, False), fill=ac)
-        d.rectangle([60, 252, 96, 256], fill=ac)
+    draw_eyebrow(d, 60, 214, b.get("eyebrow") or "", 27, ac, ac, upper=True)
     big = b.get("big")
     if not big:
         return
@@ -224,10 +238,7 @@ def draw_text_layout(frame, b, lt):
     d = ImageDraw.Draw(frame)
     ac = accent(b)
     d.text((44, 350), "“", font=font(240), fill=(ac[0] // 4, ac[1] // 4, ac[2] // 4))
-    eye = b.get("eyebrow") or ""
-    if eye:
-        d.text((60, 600), eye, font=font(28, False), fill=ac)
-        d.rectangle([60, 642, 96, 646], fill=ac)
+    draw_eyebrow(d, 60, 600, b.get("eyebrow") or "", 28, ac, ac)
     big = b.get("big") or ""
     start = 200 if len(big) <= 4 else 172 if len(big) <= 6 else 140
     f, size = fit_big(big, start=start, min_size=64, maxw=960)
@@ -390,14 +401,13 @@ def draw_data(frame, b, lt):
     note = b.get("note") or ""
     bbox0 = d.textbbox((0, 0), text, font=f)
     num_h = bbox0[3] - bbox0[1]
-    eye_h = 48
+    eye_h = 60
     note_h = 56 if note else 0
     block = eye_h + 18 + num_h + (note_h + 26 if note else 0) + 46 + 34
     top = 260 + max(0, int((820 - block) / 2))
 
     label = b.get("eyebrow") or "关键数字"
-    d.text((60, top), label, font=font(32, False), fill=MUTED)
-    d.rectangle([60, top + 42, 96, top + 46], fill=ac)
+    draw_eyebrow(d, 60, top, label, 32, MUTED, ac)
 
     ny = top + eye_h + 18
     d.text((62, ny), text, font=f, fill=ac)

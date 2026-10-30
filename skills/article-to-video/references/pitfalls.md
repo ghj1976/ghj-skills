@@ -83,6 +83,24 @@ line_y = bbox[3] + 16
 d.rectangle([x, line_y, x + width, line_y + 8], fill=accent)
 ```
 
+**同族问题（第二轮返工）：小标签的下划线贴字。** 卡片左上角的 eyebrow（27px）、
+文字卡引语上方的小标签（28px）、数据卡的说明标签（32px）原来都写死了一个绝对 y
+（`top + 42`、`y + 42`），而 32px 中文字形的墨迹下缘刚好就是 `top + 42`——线紧贴“年”的底边，
+只剩 0–4px，缩到手机上看就像字被划了一道。三个版式统一改成 `draw_eyebrow()`：
+
+```python
+def draw_eyebrow(d, x, y, text, size, color, ac, gap=13, upper=False):
+    t = text.upper() if upper else text
+    f = font(size, False)
+    d.text((x, y), t, font=f, fill=color)
+    bb = d.textbbox((x, y), t, font=f)
+    ly = bb[3] + gap
+    d.rectangle([x, ly, x + 36, ly + 4], fill=ac)
+```
+
+数据卡的 `eye_h` 同步从 48 加到 60，保证线和主数字之间还有 10px 以上。
+验收方法：把 1080×1920 缩到 480 宽看，线还能和字分开才算过。
+
 ## 10. 音效削波与响度漂移
 
 音效轨按 RMS 0.02 归一，峰值仍然到 **1.0**，混音直接削波。修法：音效按**峰值**归一到 0.30，`amix` 后加 `alimiter=limit=0.95`，再用 `ebur128` 查真峰值。目标 −16 LUFS，峰值 ≤ −1.5dB。
