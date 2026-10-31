@@ -7,6 +7,19 @@
 
 beat 元组（后三项可省）：
   (口播, 字幕, 大字, 版式, 主色, 小标签, 图片, 数据卡说明, 是否用动态片段)
+
+版式（layout）：
+  card    图片卡（16:9 铺满；超宽横幅自动走深色卡底）
+  poster  竖构图/近方形插画：卡片按图收窄，图铺满卡片（配合 image_margins.py 裁空白边）
+  text    纯文字卡（引语/观点）
+  data    数据卡（主数字 count-up + 说明行）
+  hook    全屏大字钩子
+  full    更高的图片卡
+  bleed   整屏动态片段（第 9 位写片段 key）
+
+图片路径：`render.py` 先找 `--assets` 目录，找不到再回落到项目 `assets/`。
+原素材只读引用；用 `python image_margins.py ../06 --crop` 裁过空白边的衍生图放 `assets/`，
+beat 里直接写衍生文件名（如 `file-xxx_crop.png`）。
 """
 
 # 先定主题句和三个支撑问题，再写 SCENES（见 SKILL.md 阶段 1）。
@@ -51,6 +64,10 @@ SCENES = [
         "kind": "story",
         "default_img": None,
         "beats": [
+            # 竖构图插画：先用 image_margins.py 裁掉空白边，再用 poster 让图铺满卡片
+            ("它之所以值钱，是因为没人能一句话说清它怎么坏的。",
+             "没人能一句话说清\n它怎么坏的",
+             "说不清", "poster", "cyan", "竖构图", "cover_crop.png"),
             # 第 8 位是数据卡说明行，count-up 结束后显示在数字下面
             ("报告说，至少 35,300 次网络请求。",
              "报告：至少 35,300 次网络请求",
@@ -84,7 +101,7 @@ def flatten(scenes=None):
                 "text": text,
                 "sub": sub,
                 "big": big,
-                "layout": layout,       # hook | card | text | data | full
+                "layout": layout,       # hook | card | poster | text | data | full
                 "accent": accent,       # orange | cyan
                 "eyebrow": eyebrow,
                 "img": img,

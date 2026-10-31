@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 """1080×1920 竖屏：动态大字、模糊底图、30fps。
 
-支持两种图片镜头：
-  - 静帧（img）：整图铺满卡片，整帧慢推近 + 光扫；
+支持这几种图片镜头：
+  - 静帧 card/hook/full：整图按比例进卡片，整帧慢推近 + 光扫；
+  - 超宽横幅（gap > 0.28h）：深色卡底 + 上下细边，不用“同图放大模糊填空”（会成色块）；
+  - poster：竖构图/近方形插画，卡片按图片比例收窄，让图铺满卡片（先裁掉原图空白边）；
   - 动态 B-roll（clip）：读 clips/<beat_id>/ 的帧序列，按 beat 时长线性播放。
+
+图片查找顺序：--assets 目录 → 项目 assets/ 目录（放裁切过的衍生图，不覆盖原始素材）。
 """
 import bisect
 import json
@@ -104,9 +108,25 @@ _FG = {}
 _CAP = {}
 
 
+ASSETS = BASE / "assets"
+
+
+def asset_path(img):
+    """先找 --assets 目录，再回落到项目自己的 assets/。
+
+    没有空白边的原图直接引用素材目录；量过墨迹 bbox、裁过空白边的衍生图放
+    项目 assets/，这样既不覆盖用户素材，也不用把整份素材复制一遍。
+    """
+    p = ROOT / img
+    if p.exists():
+        return p
+    q = ASSETS / img
+    return q if q.exists() else p
+
+
 def bg_for(img):
     if img not in _BG:
-        src = Image.open(ROOT / img).convert("RGB")
+        src = Image.open(asset_path(img)).convert("RGB")
         sw, sh = src.size
         scale = max(W / sw, H / sh)
         big = src.resize((int(sw * scale) + 1, int(sh * scale) + 1), Image.LANCZOS)
@@ -137,7 +157,7 @@ def bg_mean(img):
 def fg_for(img):
     """只做尺寸上限，不强行拉成 16:9；竖图/方图交回 image_card 按比例摆放。"""
     if img not in _FG:
-        src = Image.open(ROOT / img).convert("RGB")
+        src = Image.open(asset_path(img)).convert("RGB")
         scale = min(1.0, 1600 / max(1, src.width), 900 / max(1, src.height))
         if scale < 1.0:
             src = src.resize((max(1, int(src.width * scale)),
@@ -283,6 +303,29 @@ def clip_card(frame, b, lt, y=540, h=608):
     return frame
 
 
+def poster_card(frame, b, lt, y=540, h=800):
+    """竖构图插画（原图左右大片空白）：卡片按插画比例收窄，让图铺满卡片。
+
+    宽卡片 contain 一张 0.73 比例的竖图，两侧会剩几百像素的空，观众看到的是
+    “一张纸上画了个小人”。改成窄卡片后插画顶到卡片四边，留白交给深色背景；
+    前提是先用 image_margins.py 把原图的空白边裁掉（比例已是内容比例）。
+    """
+    src = fg_for(b["img"])
+    nw = max(1, int(round(src.width * h / src.height)))
+    art = src.resize((nw, h), Image.LANCZOS)
+    x = (W - nw) // 2
+    pad = 26
+    mask = Image.new("L", (nw + pad * 2, h + pad * 2), 0)
+    ImageDraw.Draw(mask).rectangle([pad, pad, nw + pad, h + pad], fill=125)
+    mask = mask.filter(ImageFilter.GaussianBlur(14))
+    frame.paste((0, 0, 0), (x - pad, y - pad + 8), mask)
+    frame.paste(art, (x, y))
+    d = ImageDraw.Draw(frame)
+    # 不加顶部强调条：它离大标题下划线只有十几像素，会看成“两条线”
+    d.rectangle([x, y, x + nw - 1, y + h - 1], outline=(74, 84, 100), width=2)
+    return frame
+
+
 def image_card(frame, b, lt, y=540, h=608, zoom_max=0.10, duration=None):
     """整图按比例放进卡片：不裁切、不拉变形，保留图片自带说明文字。
 
@@ -293,9 +336,21 @@ def image_card(frame, b, lt, y=540, h=608, zoom_max=0.10, duration=None):
     scale = min(W / src.width, h / src.height)
     nw, nh = max(1, int(round(src.width * scale))), max(1, int(round(src.height * scale)))
     if (nw, nh) != (W, h):
-        cover = ImageOps.fit(src, (W, h), method=Image.LANCZOS).filter(ImageFilter.GaussianBlur(16))
-        shade = Image.new("RGBA", (W, h), (0, 0, 0, 130))
-        frame.paste(Image.alpha_composite(cover.convert("RGBA"), shade).convert("RGB"), (0, y))
+        gap = h - nh
+        if gap > h * 0.28:
+            # 3:1、4:1 这种超宽横幅：同图 cover 要放大 2 倍以上，模糊填充会被拉成
+            # 一片刺眼色块，像渲染故障。改用深色卡底 + 上下两条细边，读起来是
+            # “贴在深色卡纸上的一张图”，而不是坏掉的背景。
+            mat = Image.new("RGB", (W, h), (13, 17, 25))
+            md = ImageDraw.Draw(mat)
+            md.rectangle([0, 0, W, 1], fill=(52, 62, 80))
+            md.rectangle([0, h - 1, W, h], fill=(52, 62, 80))
+            frame.paste(mat, (0, y))
+        else:
+            cover = ImageOps.fit(src, (W, h), method=Image.LANCZOS).filter(
+                ImageFilter.GaussianBlur(max(16, int(h * 0.10))))
+            shade = Image.new("RGBA", (W, h), (0, 0, 0, 150))
+            frame.paste(Image.alpha_composite(cover.convert("RGBA"), shade).convert("RGB"), (0, y))
     frame.paste(src.resize((nw, nh), Image.LANCZOS), ((W - nw) // 2, y + (h - nh) // 2))
     d = ImageDraw.Draw(frame)
     d.rectangle([0, y, W, y + 3], fill=accent(b))
@@ -343,13 +398,17 @@ def slow_zoom(frame, prog, amt=0.045):
 
 
 def beat_frame(b, lt, t, vis_dur=None):
-    img = None if b["layout"] == "data" else b.get("img")
-    if img:
-        frame = bg_for(img).copy()
+    img = b.get("img")
+    # poster 版式不拿竖图当整屏背景（米色放大后发灰），用深色渐变底衬白纸卡片
+    bg_img = None if b["layout"] in ("data", "poster") else img
+    if bg_img:
+        frame = bg_for(bg_img).copy()
     else:
         frame = BG.copy()
     has_clip = bool(b.get("clip")) and (CLIPS / b["clip"] / "meta.json").exists()
-    if has_clip:
+    if b["layout"] == "poster" and img:
+        poster_card(frame, b, lt)
+    elif has_clip:
         clip_card(frame, b, lt, y=540 if b["layout"] != "full" else 470,
                   h=608 if b["layout"] != "full" else 760)
     elif b["layout"] in ("card", "hook", "full") and img:
@@ -358,7 +417,7 @@ def beat_frame(b, lt, t, vis_dur=None):
                    duration=vis_dur)
     if b["layout"] == "text":
         # 只在底图偏亮时压暗；深色底图再加 scrim 只会让画面发灰
-        mean = bg_mean(img)
+        mean = bg_mean(bg_img)
         alpha = int(min(140, max(0, (mean - 42) * 2.6)))
         if alpha:
             dark = Image.new("RGBA", (W, H), (3, 5, 9, alpha))
