@@ -151,7 +151,7 @@ project/
     asr_times.json
   out/
     timeline.json narration.wav music.wav sfx.wav audio_mix.wav
-    subtitles.srt 解说稿.md <成片>.mp4
+    subtitles.srt 解说稿.md 口播稿.md 发布文案.md 封面.png <成片>.mp4
 ```
 
 ## 阶段 1 — 脚本与分镜
@@ -385,7 +385,40 @@ python check_voice.py            # 基频/LTAS/语速门禁
 - 有动态片段时，每个片段抽两帧确认内容与运动，并确认没有混进原片人声。
 - 确认旧版本还在，README 里有链接。
 
-交付：MP4、SRT、带时间码的解说稿、写清重跑命令的 README，以及一段话说明音色/画幅选择。
+**交付清单（缺一项都算没做完）：**
+
+| 交付物 | 位置 | 说明 |
+|---|---|---|
+| 成片 | `out/<片名>_竖屏.mp4` | 1080×1920 / 30fps / H.264 / AAC |
+| 字幕 | `out/subtitles.srt` | 切点对齐到下一句开口 |
+| 带时间码解说稿 | `out/解说稿.md` | 按章节分组 |
+| 配音原文 | `out/口播稿.md` | TTS 实际输入的连读文本 |
+| **发布文案** | `out/发布文案.md` | 短标题 ×3、摘要 ×2（换人群）、话题池、置顶评论 |
+| **封面** | `out/封面.png` | 1080×1920，从成片抽的钩子镜头 |
+| 对照图 | `out/配图对照.png` | 逐镜头核对配图 |
+| README | `README.md` | 参数、配图理由、重跑命令、口径边界 |
+
+一段话说明音色/画幅选择，写进 README 开头。
+
+### 发布文案怎么给（视频号 / 抖音通用）
+
+视频不是交给用户就完了——**观众看到的第一屏是封面和标题，不是视频**。所以每次出片都按
+`scripts/publish_copy_template.md` 填一份 `out/发布文案.md`，五项齐：
+
+1. **短标题 3 个**（列表页展示，**≤16 字**，别用整句长标题）：
+   主推 = 数字 + 提问/反差；备选 = 最短的反差句；备选 = 悬念式。
+   标题里的数字口径必须和封面、开头第一句一致（标题写“四成”，封面就不能写“40%”，反之亦然）。
+2. **摘要 2 版**：只差**人群切入口**（家长向 / HR 向、消费者向 / 从业者向），
+   正文数字与结论必须完全一致，不能出现互相矛盾的口径。
+3. **摘要第一行就是钩子**：前 40 字左右是不点“展开”就能看到的部分。
+   不要用“本期视频聊聊…”“大家好”开场；第一行放最反直觉的那个数字。
+4. **话题 4–6 个**，三类各占：大词（曝光）、垂类（精准）、人群（共鸣）。
+   堆到 10 个只会稀释曝光，还像营销号。
+5. **置顶评论**：把主题句写成一句可带走的话 + 一个**二选一**问题（“你更担心 A 还是 B？”），
+   比“你怎么看”更容易起量。
+6. **封面**：`python make_cover.py` 从成片抽钩子镜头那一帧（默认第 0 个 beat +2s），
+   输出 1080×1920；**不要用 0–1 秒的标题卡**——缩略图里那只有几个字，看不出主题。
+   平台若要别的比例（如 6:7 分享卡），`--ratios 6:7 --offset 0.22`，裁完必须看一眼有没有把字幕切半。
 
 ## 排错表
 
@@ -443,7 +476,9 @@ python check_voice.py            # 基频/LTAS/语速门禁
 - [ ] −16 LUFS，真峰值 ≤ −1.0dB，音效峰值 ≤ 0.3。
 - [ ] CFR 30fps，完整解码干净，切点附近无连续冻结帧。
 - [ ] `render.py` 项目文案已改（没有示例品牌名）。
-- [ ] SRT + 解说稿 + README；旧版本保留。
+- [ ] SRT + 解说稿 + 口播稿 + README；旧版本保留。
+- [ ] `out/发布文案.md`：短标题 ≤16 字、摘要两版人群不同但口径一致、话题 4–6 个、置顶评论准备好。
+- [ ] `out/封面.png` 是钩子镜头（不是标题卡），手机缩略图下大字可读；需要别的比例时裁完检查过。
 - [ ] `check_audio.py` PASS：开头无瞬态、无爆音、最长停顿 ≤0.65s、切点=开口（±0.15s）。
 - [ ] `contact_sheet.py` 生成对照图，逐镜头看过配图是否对得上。
 - [ ] 动态片段：每段都抽帧看过内容；不跨剪辑点；不循环/冻结；原片人声没混进来。
@@ -456,6 +491,7 @@ python check_voice.py            # 基频/LTAS/语速门禁
 - [QA 命令与人工清单](references/qa-checklist.md)
 - [Windows/WSL 环境搭建](references/environment.md)
 - [分镜 schema 示例](scripts/script_data_template.py)
+- [发布文案模板](scripts/publish_copy_template.md)
 
 ## 脚本
 
@@ -469,6 +505,8 @@ python check_voice.py            # 基频/LTAS/语速门禁
 - `scripts/align_asr.py` — 16kHz faster-whisper 词级对齐 → `asr_times.json`。
 - `scripts/build_audio_utils.py` — 垫乐、音效、混音、SRT、解说稿。
 - `scripts/build_audio_cont.py` — 连续音频 + 分轨 + `timeline.json`；切点吸附到开口。
+- `scripts/make_cover.py` — 从成片抽钩子镜头做封面（1080×1920），可加 `--ratios 6:7` 出分享卡比例。
+- `scripts/publish_copy_template.md` — 发布文案模板：短标题 / 摘要 / 话题 / 置顶评论 / 自检表。
 - `scripts/image_margins.py` — 量配图空白边（四角色/alpha → 墨迹 bbox），按内容占比建议 `card` / `poster` / 不裁，可 `--crop` 生成 `assets/` 衍生图。
 - `scripts/render.py` — 竖屏渲染器（静帧推近 + 动态 B-roll + 自适应压暗 + 下划线修复 + `poster` 竖卡 + 超宽横幅深色卡底 + `assets/` 回落）。
 - `scripts/make_clips.py` — 参考视频 → `clips/<beat_id>/` 帧序列（按 beat 时长映射）。
