@@ -5,17 +5,29 @@
 `flatten()` 必须返回包含以下字段的 dict：
   id, scene, text, sub, big, layout, accent, eyebrow, img, note, clip
 
-beat 元组（后三项可省）：
-  (口播, 字幕, 大字, 版式, 主色, 小标签, 图片, 数据卡说明, 是否用动态片段)
+beat 元组（后几项可省）：
+  (口播, 字幕, 大字, 版式, 主色, 小标签, 图片, 数据卡说明, 是否用动态片段, extras)
 
 版式（layout）：
   card    图片卡（16:9 铺满；超宽横幅自动走深色卡底）
   poster  竖构图/近方形插画：卡片按图收窄，图铺满卡片（配合 image_margins.py 裁空白边）
-  text    纯文字卡（引语/观点）
+  cover   竖幅照片整屏铺满（近 9:16 的实拍图用这个，别塞进 16:9 卡片）
+  text    纯文字卡（观点/一句话）
   data    数据卡（主数字 count-up + 说明行）
   hook    全屏大字钩子
   full    更高的图片卡
   bleed   整屏动态片段（第 9 位写片段 key）
+
+结构版式（不依赖图片，数据和文案写在 extras 里；一条视频至少用 4 种，见 SKILL.md）：
+  chat     {"title","badge","msgs":[{"who","role":"user|agent","text","tag"}]}
+  layers   {"top":{"label","sub","chips":[]},"bottom":[{"label","lines":[]}],"note"}
+  flow     {"steps":[{"t","s"}],"note"}
+  compare  {"left":{"kicker","title","items":[]},"right":{...},"vs":"VS"}
+  bars     {"rows":[{"label","value","text","strong"}],"max","note"}
+  kpi      {"items":[{"v":"300","u":"条消息","l":"模拟环境"}],"note"}
+  list     {"items":[{"k":"连续","d":"跨群聊和 PR 保持上下文"}],"note"}
+  terminal {"title","lines":[{"k":"add|del|ctx|meta","t"}],"status","note"}
+  quote    {"text","by"}
 
 图片路径：`render.py` 先找 `--assets` 目录，找不到再回落到项目 `assets/`。
 原素材只读引用；用 `python image_margins.py ../06 --crop` 裁过空白边的衍生图放 `assets/`，
@@ -56,6 +68,17 @@ SCENES = [
             ("被风控封了，就自己找密钥。",
              "被风控封了\n就自己找密钥",
              "被封之后", "hook", "cyan", "越界操作", IMG["detail"]),
+            # 第 10 位 extras：结构版式的数据（这里画一条群聊消息流）
+            ("群里没人 @ 它，它自己认领了这件事。",
+             "没人 @ 它\n它自己认领",
+             "没人 @ 它", "chat", "cyan", "工作群", None, "",
+             {"title": "飞书 · 产品技术群", "badge": "12 人在线",
+              "msgs": [
+                  {"who": "前端 小明", "role": "user",
+                   "text": "窗口没聚焦时点会话，会变成双击进入重命名。", "tag": "没人 @ 它"},
+                  {"who": "Super-agent", "role": "agent",
+                   "text": "已复现，根因找到，修复和 PR 都提了。", "tag": "自主动手"},
+              ]}),
         ],
     },
     {
@@ -95,18 +118,20 @@ def flatten(scenes=None):
             note = b[7] if len(b) > 7 else ""
             # 片段目录按 beat id 命名；render.py 读 clips/<id>/meta.json
             clip = f"{si:02d}_{bi:02d}" if len(b) > 8 and b[8] else ""
+            extras = b[9] if len(b) > 9 else None
             out.append({
                 "id": f"{si:02d}_{bi:02d}",
                 "scene": si,
                 "text": text,
                 "sub": sub,
                 "big": big,
-                "layout": layout,       # hook | card | poster | text | data | full
+                "layout": layout,       # 见文件头：图片版式 + 结构版式
                 "accent": accent,       # orange | cyan
                 "eyebrow": eyebrow,
                 "img": img,
                 "note": note,
                 "clip": clip,
+                "extras": extras or {},
             })
     return out
 

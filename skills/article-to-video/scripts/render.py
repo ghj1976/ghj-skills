@@ -1,16 +1,29 @@
 # -*- coding: utf-8 -*-
 """1080×1920 竖屏：动态大字、模糊底图、30fps。
 
-支持这几种图片镜头：
+图片镜头：
   - 静帧 card/hook/full：整图按比例进卡片，整帧慢推近 + 光扫；
   - 超宽横幅（gap > 0.28h）：深色卡底 + 上下细边，不用“同图放大模糊填空”（会成色块）；
   - poster：竖构图/近方形插画，卡片按图片比例收窄，让图铺满卡片（先裁掉原图空白边）；
+  - cover：竖幅照片整屏铺满，上下渐变 scrim 给大字和字幕让位；
   - 动态 B-roll（clip）：读 clips/<beat_id>/ 的帧序列，按 beat 时长线性播放。
+
+结构版式（不依赖图片，靠程序画，数据和文案写在 beat 的 extras 里）：
+  - chat     群聊/消息流：左人右 AI，气泡逐条出现，可带“没人@它”之类的标签
+  - layers   分层架构：上层调度 + 下层多工位 + 箭头，逐层点亮
+  - flow     纵向流程：编号步骤 + 连接线，按顺序推进
+  - compare  左右对比：两栏标题 + 要点 + 中间 VS
+  - bars     条形对比：数值条生长 + 数值标注
+  - kpi      多数字并排：2–3 个关键数字 + 说明
+  - list     清单：序号 + 标题 + 一行说明，逐行点亮
+  - terminal 终端/PR 卡：标题栏 + diff 行 + 状态徽章
+  - quote    长引语：左侧竖条 + 出处
 
 图片查找顺序：--assets 目录 → 项目 assets/ 目录（放裁切过的衍生图，不覆盖原始素材）。
 """
 import bisect
 import json
+import math
 import re
 import os
 import subprocess
@@ -49,6 +62,8 @@ END_Q = os.environ.get("VIDEO_END_Q", "你猜，它下一个执念会是什么�
 END_CTA = os.environ.get("VIDEO_END_CTA", "你怎么看？评论区聊聊")
 END_SOURCE = os.environ.get("VIDEO_SOURCE", "资料来源：Swarmcha.se 报告 / 腾讯方面回应")
 DATA_SOURCE = os.environ.get("VIDEO_DATA_SOURCE", "数据来自公开资料")
+# 开场第一句就是原声/钩子时，不要那 1 秒静态标题卡：VIDEO_NO_TITLE=1
+NO_TITLE = os.environ.get("VIDEO_NO_TITLE", "0") == "1"
 
 WHITE = (247, 248, 250)
 MUTED = (158, 167, 180)
@@ -243,7 +258,9 @@ def draw_big(frame, b, lt):
     if not big:
         return
     f, size = fit_big(big)
-    y = 292 + int(10 * (1 - ease_out(lt / 0.28)))
+    # 结构版式下方有界面/图表，大字整体上移 30px，给下面的卡片留出呼吸空间
+    base = 262 if b["layout"] in STAGE_LAYOUTS else 292
+    y = base + int(10 * (1 - ease_out(lt / 0.28)))
     d.text((63, y + 4), big, font=f, fill=(0, 0, 0), stroke_width=5, stroke_fill=(0, 0, 0))
     d.text((60, y), big, font=f, fill=ac)
     # underline sweep, placed below the real glyph bbox
@@ -270,6 +287,594 @@ def draw_text_layout(frame, b, lt):
     w = int(min(320, f.getlength(big) * 0.55) * ease_out(lt / 0.35))
     if w:
         d.rectangle([60, ly, 60 + w, ly + 8], fill=ac)
+
+
+# ---------------------------------------------------------------- 结构版式
+# 不依赖图片的“程序画”版式：数据/文案写在 beat 的 extras（元组第 10 位）里。
+# 这些镜头一律用深色渐变底，不拿配图当背景——它们读起来是界面/图表，不是照片。
+STAGE_LAYOUTS = ("chat", "layers", "flow", "compare", "bars", "kpi",
+                 "list", "terminal", "quote")
+STAGE_TOP = 536
+STAGE_BOT = 1180
+
+
+def clamp01(x):
+    return max(0.0, min(1.0, x))
+
+
+def ellip(text, f, maxw):
+    """按像素宽度截断并加省略号，保证任何版式都不会把字顶出安全区。"""
+    if f.getlength(text) <= maxw:
+        return text
+    s = ""
+    for ch in text:
+        if f.getlength(s + ch + "…") > maxw:
+            break
+        s += ch
+    return s + "…"
+
+
+NO_LINE_START = "，。！？、；：）》」』】·…,.!?;:)]}"
+
+
+def _tokens(text):
+    """把中英混排切成“字”和“整词”：Agent / macOS / 29.5% 不能被拆到两行。"""
+    out, buf = [], ""
+    for ch in text:
+        if ch.isascii() and (ch.isalnum() or ch in "+-_.%/'"):
+            buf += ch
+        else:
+            if buf:
+                out.append(buf)
+                buf = ""
+            out.append(ch)
+    if buf:
+        out.append(buf)
+    return out
+
+
+def wrap_cjk(text, f, maxw):
+    """按像素换行，但不让行首落在标点上、也不拆英文词。"""
+    lines = []
+    for raw in text.split("\n"):
+        cur = ""
+        for tok in _tokens(raw):
+            if not cur:
+                cur = tok
+            elif f.getlength(cur + tok) <= maxw:
+                cur += tok
+            elif tok in NO_LINE_START:
+                cur += tok            # “，。”不许另起一行
+            else:
+                lines.append(cur)
+                cur = tok
+        if cur:
+            lines.append(cur)
+    return lines
+
+
+def fit_lines(text, f, maxw, maxlines=2):
+    lines = wrap_cjk(text, f, maxw)
+    if len(lines) <= maxlines:
+        return lines
+    lines = lines[:maxlines]
+    last = lines[-1]
+    while last and f.getlength(last + "…") > maxw:
+        last = last[:-1]
+    lines[-1] = last + "…"
+    return lines
+
+
+def paste_alpha(frame, layer, xy, a):
+    """按 alpha 把一层 RGBA 贴进 RGB 帧（气泡/卡片入场用）。"""
+    if a <= 0.01:
+        return
+    if a >= 0.995:
+        frame.paste(layer, xy, layer)
+        return
+    lay = layer.copy()
+    lay.putalpha(lay.getchannel("A").point(lambda v: int(v * a)))
+    frame.paste(lay, xy, lay)
+
+
+def draw_chat(frame, b, lt):
+    """群聊消息流：左人右 AI，气泡逐条出现，最后一条带“正在输入”。
+
+    extras = {"title","badge","msgs":[{"who","role","text","tag"}]}
+    """
+    ex = b.get("extras") or {}
+    ac = accent(b)
+    msgs = ex.get("msgs") or []
+    d = ImageDraw.Draw(frame)
+    y0 = STAGE_TOP
+    d.rounded_rectangle([60, y0, 1020, y0 + 54], radius=14, fill=(19, 25, 35),
+                        outline=(44, 54, 70), width=2)
+    d.text((84, y0 + 14), ellip(ex.get("title", "工作群"), font(26, False), 700),
+           font=font(26, False), fill=(176, 187, 202))
+    d.text((998, y0 + 16), ex.get("badge", "群聊"), font=font(22, False),
+           fill=(118, 130, 148), anchor="ra")
+
+    size = 30
+    maxw = 660
+    # 每条消息上方还要放名字（34px），所以舞台从标题条下 34px 才开始算
+    avail = STAGE_BOT - (y0 + 54) - 34
+
+    def build(size):
+        f = font(size, False)
+        pad = max(12, int(size * 0.58))
+        lh = int(size * 1.36)
+        items = []
+        for m in msgs:
+            lines = fit_lines(m.get("text", ""), f, maxw, 3)
+            bh = pad * 2 + lh * len(lines)
+            items.append((m, lines, bh, pad, lh))
+        total = sum(it[2] + 46 for it in items)
+        return f, items, total
+
+    f, items, total = build(size)
+    while total > avail and size > 22:
+        size -= 2
+        f, items, total = build(size)
+    gap = int(min(18, max(0, (avail - total) / max(1, len(items) - 1)))) if len(items) > 1 else 0
+    dur = max(1.2, float(b.get("duration") or 2.0))
+    step = min(0.5, dur * 0.55 / max(1, len(items)))
+    yy = y0 + 54 + 40
+    last_agent = bool(items) and items[-1][0].get("role") == "agent"
+    for i, (m, lines, bh, pad, lh) in enumerate(items):
+        appear = i * step
+        a = clamp01((lt - appear) / 0.22)
+        role = m.get("role", "user")
+        if a <= 0:
+            if i == len(items) - 1 and last_agent:
+                # 还没发出来：先给“正在输入”的三点，别让画面空着
+                for k in range(3):
+                    cx = 940 - k * 30
+                    rad = 6 + 2 * abs(math.sin(lt * 5 + k * 1.1))
+                    d.ellipse([cx - rad, yy + 14 - rad, cx + rad, yy + 14 + rad],
+                              fill=(96, 112, 132))
+            continue
+        layer = Image.new("RGBA", (W, bh + 40), (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        name_f = font(23, False)
+        if role == "agent":
+            color = ac
+            fill = (int(ac[0] * 0.14) + 12, int(ac[1] * 0.14) + 15, int(ac[2] * 0.14) + 20)
+            outl = (int(ac[0] * 0.62), int(ac[1] * 0.62), int(ac[2] * 0.62))
+            name_x, anchor = 978, "ra"
+        else:
+            color = (152, 164, 184)
+            fill = (28, 34, 46)
+            outl = (62, 74, 92)
+            name_x, anchor = 102, "la"
+        who = m.get("who", "")
+        ld.text((name_x, 2), who, font=name_f, fill=color, anchor=anchor)
+        tag = m.get("tag")
+        if tag:
+            cf = font(20, False)
+            cw = cf.getlength(tag) + 20
+            tw = name_f.getlength(who)
+            cx = name_x + tw + 10 if anchor == "la" else name_x - tw - 10 - cw
+            ld.rounded_rectangle([cx, 1, cx + cw, 29], radius=14,
+                                 fill=(int(ac[0] * 0.28), int(ac[1] * 0.28), int(ac[2] * 0.28)))
+            ld.text((cx + 10, 15), tag, font=cf, fill=ac, anchor="lm")
+        textw = max((f.getlength(l) for l in lines), default=0)
+        bw = min(maxw + 2 * pad, int(textw) + 2 * pad)
+        bx0 = 978 - bw if role == "agent" else 102
+        bx1 = bx0 + bw
+        ld.rounded_rectangle([bx0, 34, bx1, 34 + bh], radius=18, fill=fill,
+                             outline=outl, width=2)
+        ty = 34 + pad
+        for ln in lines:
+            ld.text((bx0 + pad, ty), ln, font=f, fill=(238, 244, 250))
+            ty += lh
+        paste_alpha(frame, layer, (0, yy - 34 + int(10 * (1 - a))), a)
+        yy += bh + 46 + gap
+
+
+def draw_layers(frame, b, lt):
+    """分层架构：上层调度 + 下层并列工位 + 分流箭头，逐层点亮。
+
+    extras = {"top":{"label","sub","chips":[]}, "bottom":[{"label","lines":[]}], "note":""}
+    """
+    ex = b.get("extras") or {}
+    ac = accent(b)
+    d = ImageDraw.Draw(frame)
+    top = ex.get("top") or {}
+    p = ease_out(clamp01(lt / 0.45))
+    dy = int(18 * (1 - p))
+    x0, x1 = 60, 1020
+    y0, y1 = STAGE_TOP, STAGE_TOP + 186
+    d.rounded_rectangle([x0, y0 + dy, x1, y1 + dy], radius=22, fill=(18, 24, 34),
+                        outline=(int(ac[0] * 0.55), int(ac[1] * 0.55), int(ac[2] * 0.55)),
+                        width=2)
+    d.text((x0 + 30, y0 + 18 + dy), top.get("label", "Router"), font=font(40), fill=ac)
+    d.text((x0 + 30, y0 + 72 + dy), ellip(top.get("sub", ""), font(25, False), 880),
+           font=font(25, False), fill=(168, 179, 196))
+    cx = x0 + 30
+    for i, c in enumerate(top.get("chips") or []):
+        a = clamp01((lt - 0.22 - i * 0.1) / 0.2)
+        if a <= 0:
+            continue
+        cf = font(23, False)
+        cw = cf.getlength(c) + 26
+        if cx + cw > x1 - 24:
+            break
+        d.rounded_rectangle([cx, y0 + 124 + dy, cx + cw, y0 + 158 + dy], radius=17,
+                            fill=(int(ac[0] * 0.13 * a) + 14, int(ac[1] * 0.13 * a) + 18,
+                                  int(ac[2] * 0.13 * a) + 24))
+        d.text((cx + 13, y0 + 141 + dy), c, font=cf, fill=(222, 232, 244), anchor="lm")
+        cx += cw + 12
+
+    items = ex.get("bottom") or []
+    n = max(1, len(items))
+    gap = 14
+    bw = (x1 - x0 - gap * (n - 1)) / n
+    by0 = y1 + 92
+    bh = ex.get("bottom_h", 196)
+    bus_y = y1 + 46
+    trunk = clamp01(lt / 0.3)
+    d.line([(540, y1 + 2), (540, y1 + 2 + 44 * trunk)], fill=(72, 84, 104), width=3)
+    if trunk >= 1:
+        d.line([(x0 + bw / 2, bus_y), (x0 + (n - 1) * (bw + gap) + bw / 2, bus_y)],
+               fill=(72, 84, 104), width=3)
+    for i, it in enumerate(items):
+        bx0 = x0 + i * (bw + gap)
+        bx1 = bx0 + bw
+        acx = bx0 + bw / 2
+        a = clamp01((lt - 0.4 - i * 0.12) / 0.28)
+        if a <= 0:
+            continue
+        off = int(14 * (1 - a))
+        if trunk >= 1:
+            d.line([(acx, bus_y), (acx, by0 - 12 + off)], fill=(72, 84, 104), width=3)
+            d.polygon([(acx - 7, by0 - 18 + off), (acx + 7, by0 - 18 + off), (acx, by0 - 8 + off)],
+                      fill=ac)
+        last = i == n - 1
+        fill = ((int(ac[0] * 0.20) + 10, int(ac[1] * 0.20) + 12, int(ac[2] * 0.20) + 16)
+                if last else (20, 26, 37))
+        d.rounded_rectangle([bx0, by0 + off, bx1, by0 + bh + off], radius=18, fill=fill,
+                            outline=(int(ac[0] * 0.55), int(ac[1] * 0.55), int(ac[2] * 0.55))
+                            if last else (56, 68, 86), width=2)
+        d.text((bx0 + 20, by0 + 20 + off), ellip(it.get("label", ""), font(29), bw - 40),
+               font=font(29), fill=(236, 241, 248))
+        rows = it.get("lines") or ([it["sub"]] if it.get("sub") else [])
+        for j, s in enumerate(rows[:4]):
+            d.text((bx0 + 20, by0 + 66 + j * 34 + off),
+                   ellip(s, font(22, False), bw - 40), font=font(22, False),
+                   fill=(160, 172, 190))
+    note = ex.get("note")
+    if note:
+        d.text((60, by0 + bh + 18), ellip(note, font(23, False), 940),
+               font=font(23, False), fill=(140, 152, 170))
+
+
+def draw_flow(frame, b, lt):
+    """纵向流程：编号 + 连接线，按顺序推进，最后一步高亮。
+
+    extras = {"steps":[{"t":"群聊吐槽","s":"Trigger · 没人 @"}], "note":""}
+    """
+    ex = b.get("extras") or {}
+    ac = accent(b)
+    steps = ex.get("steps") or []
+    n = max(1, len(steps))
+    d = ImageDraw.Draw(frame)
+    top = STAGE_TOP
+    avail = STAGE_BOT - top
+    rh = min(124, int((avail - 8 * (n - 1)) / n))
+    gap = max(4, int((avail - rh * n) / max(1, n - 1))) if n > 1 else 0
+    for i, s in enumerate(steps):
+        y = top + i * (rh + gap)
+        a = clamp01((lt - i * 0.14) / 0.28)
+        if a <= 0:
+            continue
+        off = int(12 * (1 - a))
+        last = i == n - 1
+        if i < n - 1:
+            d.line([(104, y + rh // 2 + 24), (104, y + rh + gap + 20)],
+                   fill=(58, 70, 88), width=3)
+        cy = y + rh // 2 + off
+        d.ellipse([104 - 24, cy - 24, 104 + 24, cy + 24],
+                  fill=((int(ac[0] * 0.15) + 10, int(ac[1] * 0.15) + 12,
+                         int(ac[2] * 0.15) + 16) if last else (28, 34, 46)),
+                  outline=ac if last else (70, 82, 100), width=2)
+        d.text((104, cy), f"{i + 1}", font=font(26),
+               fill=ac if last else (170, 182, 198), anchor="mm")
+        d.text((152, y + 16 + off), ellip(s.get("t", ""), font(34), 820), font=font(34),
+               fill=(240, 244, 250) if last else (210, 218, 230))
+        d.text((152, y + 64 + off), ellip(s.get("s", ""), font(23, False), 820),
+               font=font(23, False), fill=(150, 162, 182))
+    note = ex.get("note")
+    if note:
+        d.text((152, top + n * (rh + gap) + 4), ellip(note, font(23, False), 820),
+               font=font(23, False), fill=(136, 148, 166))
+
+
+def draw_compare(frame, b, lt):
+    """左右对比：两栏标题 + 要点，中间 VS。
+
+    extras = {"left":{"kicker","title","items":[]},
+              "right":{...}, "vs":"VS"}
+    """
+    ex = b.get("extras") or {}
+    ac = accent(b)
+    d = ImageDraw.Draw(frame)
+    cols = [(60, 500), (580, 1020)]
+    for k, key in enumerate(("left", "right")):
+        c = ex.get(key) or {}
+        a = clamp01((lt - k * 0.18) / 0.3)
+        if a <= 0:
+            continue
+        x0, x1 = cols[k]
+        off = int(16 * (1 - a))
+        y0, y1 = STAGE_TOP + 8 + off, STAGE_TOP + 500 + off
+        strong = key == "right"
+        col = ac if strong else (150, 162, 182)
+        d.rounded_rectangle([x0, y0, x1, y1], radius=20,
+                            fill=((int(ac[0] * 0.1) + 12, int(ac[1] * 0.1) + 14,
+                                   int(ac[2] * 0.1) + 18) if strong else (22, 28, 40)),
+                            outline=col if strong else (58, 70, 88), width=2)
+        d.text((x0 + 26, y0 + 20), ellip(c.get("kicker", ""), font(23, False), 380),
+               font=font(23, False), fill=col)
+        d.text((x0 + 26, y0 + 54), ellip(c.get("title", ""), font(35), 380),
+               font=font(35), fill=(240, 244, 250))
+        yy = y0 + 130
+        for j, it in enumerate(c.get("items") or []):
+            ia = clamp01((lt - (0.3 + k * 0.15 + j * 0.08)) / 0.22)
+            if ia <= 0:
+                break
+            d.ellipse([x0 + 28, yy + 12, x0 + 38, yy + 22], fill=col)
+            d.text((x0 + 54, yy), ellip(it, font(27, False), x1 - x0 - 84),
+                   font=font(27, False), fill=(206, 214, 228))
+            yy += 62
+    va = clamp01((lt - 0.55) / 0.22)
+    if va > 0:
+        cy = STAGE_TOP + 238
+        r = int(30 * (0.6 + 0.4 * va))
+        d.ellipse([540 - r, cy - r, 540 + r, cy + r], fill=(10, 13, 19), outline=ac, width=3)
+        d.text((540, cy - 2), ex.get("vs", "VS"), font=font(24), fill=ac, anchor="mm")
+
+
+def draw_bars(frame, b, lt):
+    """条形对比：数值条生长 + 右侧数值。
+
+    extras = {"rows":[{"label","value","text","strong"}], "max":30, "note":""}
+    """
+    ex = b.get("extras") or {}
+    ac = accent(b)
+    rows = ex.get("rows") or []
+    d = ImageDraw.Draw(frame)
+    n = max(1, len(rows))
+    maxv = float(ex.get("max") or max([float(r.get("value", 0)) for r in rows] + [1]))
+    top = STAGE_TOP + 16
+    rh = min(152, int((STAGE_BOT - top - 30) / n))
+    f_lab = font(27, False)
+    f_val = font(42)
+    for i, r in enumerate(rows):
+        y = top + i * rh
+        a = clamp01((lt - i * 0.12) / 0.7)
+        if a <= 0:
+            continue
+        val = float(r.get("value", 0))
+        strong = r.get("strong", i == n - 1)
+        col = ac if strong else (118, 132, 152)
+        d.text((60, y), ellip(r.get("label", ""), f_lab, 690), font=f_lab, fill=(196, 205, 220))
+        d.text((1020, y - 8), r.get("text") or f"{val:g}", font=f_val,
+               fill=ac if strong else (226, 233, 244), anchor="ra")
+        d.rounded_rectangle([60, y + 44, 940, y + 84], radius=20, fill=(30, 36, 48))
+        bw = int(880 * min(1.0, val / maxv) * ease_out(a))
+        if bw > 4:
+            d.rounded_rectangle([60, y + 44, 60 + bw, y + 84], radius=20, fill=col)
+    note = ex.get("note")
+    if note:
+        d.text((60, min(STAGE_BOT - 4, top + n * rh + 8)), ellip(note, font(23, False), 930),
+               font=font(23, False), fill=(140, 152, 170))
+
+
+def draw_kpi(frame, b, lt):
+    """2–3 个关键数字并排（可 count-up）。
+
+    extras = {"items":[{"v":"300","u":"条消息","l":"模拟环境"}], "note":""}
+    """
+    ex = b.get("extras") or {}
+    ac = accent(b)
+    items = ex.get("items") or []
+    d = ImageDraw.Draw(frame)
+    n = max(1, len(items))
+    gap = 16
+    w = (960 - gap * (n - 1)) / n
+    top, h = STAGE_TOP + 30, 336
+    for i, it in enumerate(items):
+        a = clamp01((lt - i * 0.14) / 0.4)
+        if a <= 0:
+            continue
+        off = int(18 * (1 - a))
+        x0 = 60 + i * (w + gap)
+        d.rounded_rectangle([x0, top + off, x0 + w, top + h + off], radius=20,
+                            fill=(20, 26, 37), outline=(60, 72, 90), width=2)
+        v = str(it.get("v", ""))
+        m = re.match(r"^([+-]?)([0-9]+(?:\.[0-9]+)?)(.*)$", v)
+        if m:
+            sign, num, suf = m.group(1), float(m.group(2)), m.group(3)
+            pr = smooth(clamp01(a * 1.7))
+            dec = len(m.group(2).split(".")[1]) if "." in m.group(2) else 0
+            v = sign + (f"{num * pr:.{dec}f}" if dec else f"{int(round(num * pr))}") + suf
+        f, _ = fit_big(v, start=86, min_size=38, maxw=w - 44)
+        d.text((x0 + w / 2, top + 104 + off), v, font=f, fill=ac, anchor="mm")
+        if it.get("u"):
+            d.text((x0 + w / 2, top + 178 + off), it["u"], font=font(26, False),
+                   fill=(168, 180, 198), anchor="mm")
+        ly = top + 238 + off
+        for ln in fit_lines(it.get("l", ""), font(25, False), w - 44, 2):
+            d.text((x0 + w / 2, ly), ln, font=font(25, False), fill=(150, 162, 182), anchor="mm")
+            ly += 34
+    note = ex.get("note")
+    if note:
+        d.text((60, top + h + 26), ellip(note, font(23, False), 930),
+               font=font(23, False), fill=(140, 152, 170))
+
+
+def draw_list(frame, b, lt):
+    """清单：序号 + 标题 + 一行说明，逐行点亮。
+
+    extras = {"items":[{"k":"连续","d":"跨群聊和 PR 保持上下文"}], "note":""}
+    """
+    ex = b.get("extras") or {}
+    ac = accent(b)
+    items = ex.get("items") or []
+    d = ImageDraw.Draw(frame)
+    n = max(1, len(items))
+    top = STAGE_TOP + 4
+    rh = min(146, int((STAGE_BOT - top) / n))
+    for i, it in enumerate(items):
+        y = top + i * rh
+        a = clamp01((lt - i * 0.13) / 0.3)
+        if a <= 0:
+            continue
+        off = int(10 * (1 - a))
+        d.line([(60, y + rh - 2), (1020, y + rh - 2)], fill=(40, 48, 62), width=1)
+        d.text((60, y + 16 + off), f"{i + 1:02d}", font=font(30), fill=ac)
+        d.text((140, y + 8 + off), ellip(it.get("k", ""), font(40), 840),
+               font=font(40), fill=(238, 243, 250))
+        if it.get("d"):
+            d.text((140, y + 70 + off), ellip(it["d"], font(24, False), 840),
+                   font=font(24, False), fill=(152, 164, 182))
+    note = ex.get("note")
+    if note:
+        d.text((60, top + n * rh + 6), ellip(note, font(23, False), 930),
+               font=font(23, False), fill=(136, 148, 166))
+
+
+def draw_terminal(frame, b, lt):
+    """终端 / PR 卡：窗口标题 + diff 行 + 状态徽章。
+
+    extras = {"title","lines":[{"k":"add|del|ctx|meta","t":"..."}],
+              "status":"已合并","note":""}
+    """
+    ex = b.get("extras") or {}
+    ac = accent(b)
+    d = ImageDraw.Draw(frame)
+    x0, y0, x1 = 60, STAGE_TOP, 1020
+    rows = (ex.get("lines") or [])[:9]
+    lh = 40
+    # 窗口高度跟着 diff 行数走：行少就不要留一大块空面板
+    y1 = y0 + 82 + lh * max(3, len(rows)) + 84
+    d.rounded_rectangle([x0, y0, x1, y1], radius=18, fill=(13, 17, 23),
+                        outline=(54, 66, 84), width=2)
+    d.rounded_rectangle([x0, y0, x1, y0 + 54], radius=18, fill=(24, 30, 38))
+    d.rectangle([x0, y0 + 34, x1, y0 + 54], fill=(24, 30, 38))
+    for i, c in enumerate(((255, 95, 86), (255, 189, 46), (39, 201, 63))):
+        d.ellipse([x0 + 20 + i * 24, y0 + 19, x0 + 32 + i * 24, y0 + 31], fill=c)
+    d.text((x0 + 110, y0 + 15), ellip(ex.get("title", "Terminal"), font(24, False), 760),
+           font=font(24, False), fill=(168, 180, 198))
+    f = font(24, False)
+    yy = y0 + 82
+    for i, ln in enumerate(rows):
+        a = clamp01((lt - 0.1 - i * 0.05) / 0.18)
+        if a <= 0:
+            break
+        k = ln.get("k", "ctx")
+        txt = ln.get("t", "")
+        if k == "add":
+            d.rectangle([x0 + 8, yy - 5, x1 - 8, yy + lh - 9], fill=(20, 44, 30))
+            fill, prefix = (150, 232, 168), "+ "
+        elif k == "del":
+            d.rectangle([x0 + 8, yy - 5, x1 - 8, yy + lh - 9], fill=(52, 24, 28))
+            fill, prefix = (255, 160, 160), "- "
+        elif k == "meta":
+            fill, prefix = (120, 205, 225), ""
+        else:
+            fill, prefix = (168, 178, 194), "  "
+        d.text((x0 + 22, yy), ellip(prefix + txt, f, x1 - x0 - 52), font=f, fill=fill)
+        yy += lh
+    st = ex.get("status")
+    if st:
+        a = clamp01((lt - 0.6) / 0.25)
+        if a > 0:
+            sf = font(26)
+            bw = sf.getlength(st) + 40
+            bx, by = x1 - 30 - bw, y1 - 68
+            d.rounded_rectangle([bx, by, bx + bw, by + 46], radius=23,
+                                fill=(int(ac[0] * 0.18), int(ac[1] * 0.18), int(ac[2] * 0.18)),
+                                outline=ac, width=2)
+            d.text((bx + 20, by + 22), st, font=sf, fill=ac, anchor="lm")
+    if ex.get("note"):
+        d.text((x0 + 2, y1 + 14), ellip(ex["note"], font(23, False), 940),
+               font=font(23, False), fill=(146, 158, 176))
+
+
+def draw_quote(frame, b, lt):
+    """长引语：左侧竖条 + 出处，适合官方原话/金句。
+
+    extras = {"text":"...","by":"Super-agent 官方哲学"}
+    """
+    ex = b.get("extras") or {}
+    ac = accent(b)
+    d = ImageDraw.Draw(frame)
+    text = ex.get("text") or b.get("big") or ""
+    # 引语是整段话，不能按“单行塞进 860px”去缩字号（会缩到 44px 还把句号甩到下一行）。
+    # 按最多 3 行反推字号，并保证最后一行不是孤零零的标点。
+    size = 72
+    while size > 40:
+        f = font(size)
+        lines = wrap_cjk(text, f, 860)
+        tail = lines[-1].strip("。！？，、；：") if lines else ""
+        if len(lines) <= 3 and (len(lines) == 1 or len(tail) >= 3):
+            break
+        size -= 4
+    f = font(size)
+    lines = fit_lines(text, f, 860, 4)
+    lh = int(size * 1.44)
+    total = lh * len(lines)
+    # 没有 big 时整块引语占满大字区 + 舞台区，不要顶在 536 以下留一大片空
+    top = 420 if not b.get("big") else STAGE_TOP + 20
+    y = top + max(0, (STAGE_BOT - top - 120 - total) // 2)
+    p = ease_out(clamp01(lt / 0.4))
+    bar_h = int((total + 6) * p)
+    d.rectangle([58, y - 8, 64, y - 8 + bar_h], fill=ac)
+    for i, ln in enumerate(lines):
+        la = clamp01((lt - i * 0.07) / 0.25)
+        if la <= 0:
+            break
+        d.text((98, y), ln, font=f, fill=(240, 245, 252))
+        y += lh
+    by = ex.get("by")
+    if by:
+        ba = clamp01((lt - 0.5) / 0.3)
+        if ba > 0:
+            d.text((98, y + 22), "—— " + by, font=font(26, False),
+                   fill=(150, 162, 182))
+
+
+STAGE_DRAW = {
+    "chat": draw_chat,
+    "layers": draw_layers,
+    "flow": draw_flow,
+    "compare": draw_compare,
+    "bars": draw_bars,
+    "kpi": draw_kpi,
+    "list": draw_list,
+    "terminal": draw_terminal,
+    "quote": draw_quote,
+}
+
+
+def cover_card(frame, b, lt):
+    """竖幅照片整屏铺满（cover），上下渐变 scrim 给大字和字幕让位。
+
+    近 9:16 的照片放进 16:9 卡片会在两侧留几百像素空；整屏 cover 只裁掉几个百分点。
+    """
+    src = fg_for(b["img"])
+    img = ImageOps.fit(src, (W, H), method=Image.LANCZOS)
+    arr = np.asarray(img.resize((90, 160), Image.BILINEAR), dtype=np.float32)
+    mean = float(arr.mean())
+    base = int(min(120, max(45, 30 + (mean - 60) * 0.55)))
+    ys = np.arange(H, dtype=np.float32)
+    top_a = (base + 175) * np.clip((700 - ys) / 700.0, 0, 1) ** 0.95
+    bot_a = (base + 150) * np.clip((ys - 1150) / (H - 1150.0), 0, 1) ** 1.25
+    alpha = np.clip(base + np.maximum(top_a, bot_a), 0, 232).astype(np.uint8)
+    rows = Image.fromarray(np.repeat(alpha[:, None], W, axis=1), "L")
+    frame.paste(Image.composite(Image.new("RGB", (W, H), (5, 5, 7)), img, rows), (0, 0))
+    return frame
 
 
 CLIPS = BASE / "clips"
@@ -399,14 +1004,20 @@ def slow_zoom(frame, prog, amt=0.045):
 
 def beat_frame(b, lt, t, vis_dur=None):
     img = b.get("img")
-    # poster 版式不拿竖图当整屏背景（米色放大后发灰），用深色渐变底衬白纸卡片
-    bg_img = None if b["layout"] in ("data", "poster") else img
+    # poster/cover 不要整屏模糊底；结构版式（chat/layers/...）一律用深色渐变底：
+    # 它们读起来是界面/图表，垫一张照片反而抢字。
+    if b["layout"] in ("data", "poster", "cover") or b["layout"] in STAGE_LAYOUTS:
+        bg_img = None
+    else:
+        bg_img = img
     if bg_img:
         frame = bg_for(bg_img).copy()
     else:
         frame = BG.copy()
     has_clip = bool(b.get("clip")) and (CLIPS / b["clip"] / "meta.json").exists()
-    if b["layout"] == "poster" and img:
+    if b["layout"] == "cover" and img:
+        cover_card(frame, b, lt)
+    elif b["layout"] == "poster" and img:
         poster_card(frame, b, lt)
     elif has_clip:
         clip_card(frame, b, lt, y=540 if b["layout"] != "full" else 470,
@@ -426,12 +1037,18 @@ def beat_frame(b, lt, t, vis_dur=None):
         draw_data(frame, b, lt)
     else:
         draw_big(frame, b, lt)
+    # 结构版式：大字画完之后在下方舞台区画界面/图表（自带分段入场动画）
+    if b["layout"] in STAGE_DRAW:
+        STAGE_DRAW[b["layout"]](frame, b, lt)
     # 每个镜头单独做一次线性推近 + 光扫：按 beat 计时，切镜头时重置
     # （按场景计时会摊到 20–30 秒上，每帧只动 0.0001，看起来就是静止画面）
     prog = (t - b["start"]) / max(0.9, b["end"] - b["start"])
     if not has_clip:
-        # 静帧/文字/数据卡的移动靠整帧线性推近；片段镜头自己就在动，不再裁边
+        # 静帧/文字/数据卡的移动靠整帧线性推近；片段镜头自己就在动，不再裁边。
+        # 结构版式的推近要更轻：推太狠会把卡片边缘和最右一列数字挤出安全区。
         amt = 0.05 if b["layout"] in ("text", "data") else 0.035
+        if b["layout"] in STAGE_LAYOUTS:
+            amt = 0.022
         frame = slow_zoom(frame, prog, amt)
     frame = light_sweep(frame, prog)
     draw_caption(frame, b, t)
@@ -451,7 +1068,8 @@ def draw_data(frame, b, lt):
         raw, suffix = m.group(1), m.group(2)
         target = float(raw.replace(",", ""))
         cur = target * p
-        shown = f"{cur:.1f}" if "." in raw else f"{int(round(cur))}"
+        dec = len(raw.split(".")[1]) if "." in raw else 0
+        shown = f"{cur:.{dec}f}" if dec else f"{int(round(cur))}"
         text = shown + suffix
     else:
         text = big
@@ -515,7 +1133,7 @@ def endcard():
 
 
 def frame_at(t, total):
-    if t < 1.0:
+    if not NO_TITLE and t < 1.0:
         fr = title_card(t)
         fr = slow_zoom(fr, t, 0.05)
         return light_sweep(fr, t)

@@ -72,6 +72,46 @@ def onsets_of(y, sr, quiet_db=-38.0, voiced_db=-36.0, sustain=4):
     return out, db
 
 
+def silence_spans(y, sr, th=-45.0, min_len=0.12):
+    """全片静音段（起点, 终点）；只用来找“下一句开口前的停顿”。"""
+    win = int(0.02 * sr)
+    n = len(y) // win
+    db = 20 * np.log10(np.sqrt(np.mean(y[:n * win].reshape(n, win) ** 2, 1)) + 1e-12)
+    q = db < th
+    spans, i = [], 0
+    while i < n:
+        if q[i]:
+            j = i
+            while j < n and q[j]:
+                j += 1
+            if (j - i) * 0.02 >= min_len:
+                spans.append((i * 0.02, j * 0.02))
+            i = j
+        else:
+            i += 1
+    return spans
+
+
+def snap_forward_to_pause(times, y, sr, max_ahead=1.0, min_gap=0.35):
+    """whisper 的词起点常常偏早，切点会落进上一句的尾音里（“话没说完就切”）。
+
+    规则：如果切点之后紧跟一段停顿（停顿结束在 1 秒内），就把切点放到停顿结束——
+    也就是下一句真正开口的地方。只往后挪、不动已经落在开口上的切点。
+    """
+    spans = silence_spans(y, sr)
+    out = list(times)
+    for k in range(1, len(out) - 1):
+        t = out[k]
+        for a, b in spans:
+            if t - 0.06 <= a < b and 0.0 < b - t <= max_ahead:
+                out[k] = b + 0.03
+                break
+        out[k] = max(out[k], out[k - 1] + min_gap)
+        if k + 1 < len(out):
+            out[k] = min(out[k], times[k + 1] - 0.25)
+    return out
+
+
 def snap_to_onsets(times, y, sr, tol=0.55):
     """把每个切点吸附到最近的语音起点，避免“画面先跳、声音没到”。
 
@@ -132,12 +172,14 @@ def main():
                 "big": b["big"], "layout": b["layout"], "accent": b["accent"],
                 "eyebrow": b["eyebrow"], "img": b["img"],
                 "note": b.get("note", ""), "clip": b.get("clip", ""),
+                "extras": b.get("extras") or {},
                 "start": round(st, 4), "end": round(en, 4), "duration": round(en - st, 4),
             })
 
     # 切点吸附到真实开口（在拼接好的 narration 上做，不含音乐）
     starts = [b["start"] for b in beats] + [round(total, 4)]
     snapped = snap_to_onsets(starts, buf, SR)
+    snapped = snap_forward_to_pause(snapped, buf, SR)
     for i, b in enumerate(beats):
         b["start"] = round(snapped[i], 4)
         b["end"] = round(snapped[i + 1], 4)
@@ -154,9 +196,11 @@ def main():
         })
     scenes[0]["start"] = 0.0
     for i in range(1, len(scenes)):
-        mid = (scenes[i - 1]["end"] + scenes[i]["start"]) / 2
-        scenes[i - 1]["end"] = round(mid, 4)
-        scenes[i]["start"] = round(mid, 4)
+        # 章节边界落在“新章节第一句的开口”，不是两段中间：长段之间还有 0.65s 空白，
+        # 取中点会让进度条/章节标签在开口前 0.3–0.4s 就跳（check_audio 会判偏差过大）。
+        cut = scenes[i]["start"] + 0.25
+        scenes[i - 1]["end"] = round(cut, 4)
+        scenes[i]["start"] = round(cut, 4)
     scenes[-1]["end"] = round(total, 4)
 
     tl = {"sr": SR, "duration": round(total, 4), "speech_end": round(t, 4),
