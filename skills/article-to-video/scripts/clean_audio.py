@@ -8,8 +8,12 @@ build_audio_cont 按 −45dB 裁首尾静音时会把这段咔哒留下。段落
 处理只碰首尾和静音，不切任何语音；所有拼接点加 10ms 淡入淡出。
 
 用法：
-  python clean_audio.py                # 用 project_config.TEMPO（没有就用 1.0）
+  python clean_audio.py                # 用 project_config.TEMPO / TEMPO_MAP（没有就用 1.0）
   python clean_audio.py --atempo 0.92 --max-pause 0.55
+
+TEMPO_MAP = {"chunk_0": 0.744, ...} 可以按段给 atempo：同一批生成里各段语速
+本来就差 10–13%，逐段一次到位（从 *_raw.wav 直出）比“先统一 0.82、再补 0.91”
+干净得多——叠加两次 atempo 会明显发闷，听感像换了个人（实测 0.78×0.91=0.71）。
 """
 import argparse
 import os
@@ -111,10 +115,12 @@ def main():
     a = ap.parse_args()
 
     tempo = a.atempo
+    tempo_map = {}
     if tempo is None:
         try:
             import project_config
             tempo = getattr(project_config, "TEMPO", 1.0)
+            tempo_map = getattr(project_config, "TEMPO_MAP", {})
         except ImportError:
             tempo = 1.0
 
@@ -125,10 +131,17 @@ def main():
     for p in chunks:
         raw = p.with_name(p.stem + "_raw.wav")
         src = raw if raw.exists() else p
+        tempo_i = tempo_map.get(p.stem, tempo)
+        if src == p and abs(tempo_i - 1.0) > 1e-3:
+            print(f"WARN {p.name} 没有 *_raw.wav：这次 atempo={tempo_i} 会叠在已处理的音频上，"
+                  f"音色会发闷；建议先 tts_chunks.py / regen_chunk2.py 重新生成", flush=True)
+        if tempo_i < 0.80:
+            print(f"WARN {p.name} atempo={tempo_i}：减速超过 20%，会明显改变音色；"
+                  f"优先重生成更慢的段落，而不是继续慢放", flush=True)
         tmp = AUD / f"_{p.stem}_tempo.wav"
-        if abs(tempo - 1.0) > 1e-3:
+        if abs(tempo_i - 1.0) > 1e-3:
             subprocess.run([ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", "-i", str(src),
-                            "-filter:a", f"atempo={tempo}", "-ar", str(SR), "-ac", "1", str(tmp)],
+                            "-filter:a", f"atempo={tempo_i}", "-ar", str(SR), "-ac", "1", str(tmp)],
                            check=True)
             work = tmp
         else:
@@ -145,7 +158,8 @@ def main():
         sf.write(str(p), y, sr, subtype="PCM_16")
         if work == tmp:
             tmp.unlink(missing_ok=True)
-        print(f"{p.name}: {d0:.2f}s -> {len(y)/sr:.2f}s  裁首尾 {a0/sr:.2f}s  压缩停顿 {ncut} 处")
+        print(f"{p.name}: atempo={tempo_i:.3f} {d0:.2f}s -> {len(y)/sr:.2f}s  "
+              f"裁首尾 {a0/sr:.2f}s  压缩停顿 {ncut} 处")
 
 
 if __name__ == "__main__":

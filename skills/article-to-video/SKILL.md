@@ -47,6 +47,9 @@ description: 把 Markdown 文章（尤其是中文公众号文章）制作成带
 20. **配图有空白边时，先量墨迹 bbox，再按比例选裁切方式——不是见白就裁，也不是照搬“同图放大模糊填空”。** 实测一张 1024×572 的插画，内容只占中间 **38.5% 宽**（左右各 31% 纯米色），塞进 1080×608 宽卡片就是“一张纸上画了个小人”，小人只有 416px。规则见阶段 0 第 3 步：`image_margins.py` 量内容占比 → 横竖都 ≥80% 不裁（留白是构图的一部分）；某边 <80% 就裁到内容，裁完宽高比 <1.15 用 `poster` 竖卡，否则仍用 `card`；图本身宽高比 ≥2.2（横幅）不裁，交给 `card` 的深色卡底分支。裁出来的衍生图放项目 `assets/`，不覆盖素材原图。
 21. **版式要轮换，别让 40 个镜头长成一张 PPT。** 只有 `card`/`text`/`data`/`hook` 四种版式时，观众 30 秒就摸清了规律，后面讲什么都在“等下一张图”。有流程就用 `flow`、有对比用 `compare`/`bars`、有对话用 `chat`、有提交/日志用 `terminal`、有分层用 `layers`、有几个数字用 `kpi`、有几条特征用 `list`、有原话用 `quote`。硬指标：**同版式不连续出现、`text` ≤20%、每条片子 ≥6 种版式、每 15–20 秒换一次类型**。信息量没变，观感完全不同（实测 40 个 beat 用 13 种版式）。
 22. **结构版式的字是“画面字”，不是口播。** `extras` 里每条 ≤18 字，超了渲染器截成 `…`；`big` 压到 3–6 字（下面已经有面板）。想让观众读的，交给字幕和口播。
+23. **音色以“跟上一版像不像”为准，不以 `check_voice.py` PASS 为准。** 门禁是参考音 ±8%、段间极差 ≤18Hz、MFCC ≥0.985；系列视频必须跑 `check_voice.py --baseline 上一版/audio`：MFCC ≥0.99 是硬门槛，Δf0 ≤15Hz 只作参考（不同文稿语调本来差 10–20Hz）。旧门禁（±18%、≤30Hz）放过过一条 262Hz（参考 239Hz）的片子——数字上“在音区里”，听感就是“开头换了个人”。
+24. **一条片子只做一次 atempo，且每段减速不超过 20%。** 先 0.78、再补 0.91（合起来 0.71）会叠加两次 WSOLA，声音发闷、像换了个人。要拉齐语速用 `TEMPO_MAP` 逐段从 `*_raw.wav` 一次到位；超过 20% 就重生成更慢的段，不要继续慢放。
+25. **中文数字会被 ASR 转成阿拉伯数字，切点会落进句中。** “六千零七”→`6007`、“五千五百八十九”→`5589`，`difflib` 跳过这几段，切点被对到后面的英文词上（实测晚 1.3 秒）。跑 `fix_boundaries.py` 用静音判据修；**不要按字数估**——`14 万行 Fortran`、`±10⁻¹⁰ K` 这种英数混排会估歪。
 
 
 
@@ -77,10 +80,10 @@ cp "$SKILL"/scripts/script_data_template.py "$PROJ"/script_data.py
 |---|---|---|
 | 0 素材 | 图片映射、空白边测量与裁切、参考视频镜头区间、画幅决策 | 每张图/每段都看过并匹配段落；`image_margins.py` 报过一遍 |
 | 1 脚本 | `script_data.py`，35–50 个 beat、≥6 种版式 | 前 3 秒有钩子；前 20 秒给出主题句 + 三件事路线图；总长 2:45–3:30；同版式不连续 |
-| 2 配音 | 2–4 个长段 WAV | `check_voice.py` PASS：段间基频极差 ≤30Hz、LTAS ≥0.90、语速 4.0–7.5 字/秒 |
-| 2.5 清理 | `clean_audio.py` 处理过的长段 | 段首无瞬态、长停顿 ≤0.55s、语速统一 |
+| 2 配音 | 2–4 个长段 WAV | `check_voice.py` PASS：参考音 ±8%、段间极差 ≤18Hz、MFCC ≥0.985；`--baseline` 与上一版 MFCC ≥0.99 |
+| 2.5 清理 | `clean_audio.py` 处理过的长段 | 段首无瞬态、长停顿 ≤0.55s、语速统一；每段只做一次 atempo（≥0.80） |
 | 3 音频 | 连续 `narration.wav`、音乐/音效、混音 | `check_audio.py` PASS：开头无瞬态、无爆音、切点=开口、−16 LUFS |
-| 4 对齐 | `asr_times.json`、`timeline.json` | 切点 = 下一句开口 |
+| 4 对齐 | `asr_times.json`、`timeline.json` | 切点 = 下一句开口；`fix_boundaries.py` 跑过（中文数字句重点看） |
 | 5 渲染 | 1080×1920 或 1920×1080 MP4 | 每个镜头都在动，无叠化，配图逐句对得上，图不被空白撑小 |
 | 6 QA | 自动报告、截图、README | CFR、解码干净、无冻结窗口 |
 
@@ -328,15 +331,18 @@ python -m venv --system-site-packages .venv-tts
 5. 跑 `check_voice.py`，PASS 再往下走；不合格先换参考片段/重生成该段，不要用变调硬拉。
 6. 长段保留，后面绝不再切。
 
-命令：`scripts/tts_chunks.py`，分别跑 `--part 0 --of 2` 和 `--part 1 --of 2`。生成完先清理、再验音色：
+命令：`scripts/tts_chunks.py`，分别跑 `--part 0 --of 2` 和 `--part 1 --of 2`。生成完先挑种子、再清理、再验音色：
 
 ```bash
-python clean_audio.py            # 统一 atempo + 去掉段首咔哒 + 压缩 0.9s 这种长停顿
-python check_voice.py            # 基频/LTAS/语速门禁
+python regen_chunk2.py --seeds 20,21,22,23   # 每段 4 次；按参考音 f0/LTAS 挑，候选落 audio/cand/
+python clean_audio.py                        # 按 TEMPO_MAP 逐段 atempo（一次到位）+ 去瞬态 + 压停顿
+python check_voice.py --baseline ../../work/<上一版>/audio   # 与上一版比 MFCC（硬）/Δf0（参考）
 ```
 
-`check_voice.py` 报“段间基频极差 >30Hz”时，用 `regen_chunk.py 偏差段号 --seeds 20,21,22` 按种子重生成，
-按“基频最接近参考 + 频谱最像”自动挑一条（实测能把 263/248/224 收到 239/249/240）。
+`check_voice.py` 的门禁是**参考音 ±8%、段间极差 ≤18Hz、MFCC ≥0.985**（旧版是 ±18% / ≤30Hz）。
+实测同一批生成 4 段能拿到 262/251/250/239Hz；262Hz 只比参考高 10%，旧门禁放过，但听感就是
+“开头换了个人”。`regen_chunk2.py` 换种子重挑后收到 240/237/246/240Hz —— 同一段文本、同一参考，
+只换采样种子，音色就能差这么多，所以**不要省这一步**。
 
 `clean_audio.py` 很关键：VoxCPM2 每段开头有 40ms 的 −11dB 瞬态，后面还跟着 0.3–0.4s 静音；
 段落拼接点又正好落在章节开头，不清掉就会出现“**每节开头咔一下、停半拍**”。
@@ -363,8 +369,13 @@ python check_voice.py            # 基频/LTAS/语速门禁
 6. 写出 `asr_times.json`，用它构建时间轴。抽三个点验证：A 句最后词结束、停顿、B 句第一个词开始；切点必须等于 B 的开口。
 7. **ASR 词起点偏早时，往后吸到“停顿结束”。** whisper 的中文词起点常早 0.3–0.9 秒，切点会落进上一句的尾音里。`build_audio_cont.snap_forward_to_pause` 的做法：找到切点之后那段静音（≥0.12s），把切点放到静音结束 +0.03s；**只往后、最多 1 秒**，已经落在开口上的切点不动。实测一条 1.66 秒的镜头，原本在句中切，挪到停顿后变成 2.5 秒，尾音保住了。
 8. **章节边界 = 新章节第一句的开口，不要取两段中点。** 长段之间还有 0.65 秒空白，取中点会让章节标签/进度条在开口前 0.3–0.4 秒就跳，`check_audio.py` 的 ±0.15s 会判失败。
+9. **中文数字被转写成阿拉伯数字时，切点会落进句中。** “六千零七” → `6007`、“五千五百八十九” → `5589`，
+   `difflib` 会跳过这几段，把切点对到后面的英文词（实测对到 `Claude`，晚 1.3 秒，上一句字幕停在画面上）。
+   跑 `python fix_boundaries.py`：只问“切点是否落在静音里”，落在语音里就挪到最近的静音结束（≤1.5s）；
+   **不要按字数估**——`14 万行 Fortran`、`±10⁻¹⁰ K` 这种英数混排会估歪，实测把正确的切点推后 1.7 秒。
+   改完跑 `check_audio.py`，并抽这几个点确认上一句已经完整播完（必要时看 0.1s 能量包络）。
 
-脚本：`scripts/align_asr.py`。实测：“它连轴转了十一天”在 7.5–9.0 秒播完，9.0–9.5 秒停顿，切点 9.54 秒正好是下一句开口。早先逐句切只给了这句 1.08 秒，尾音被切掉。
+脚本：`scripts/align_asr.py` + `scripts/fix_boundaries.py`。实测：“它连轴转了十一天”在 7.5–9.0 秒播完，9.0–9.5 秒停顿，切点 9.54 秒正好是下一句开口。早先逐句切只给了这句 1.08 秒，尾音被切掉。
 
 ## 阶段 5 — 渲染
 
@@ -572,6 +583,10 @@ python check_title.py --file out/发布文案.md     # 不过就改到过，退�
 | 主题不突出、像名词解释 | 按文章顺序覆盖，支线单独成章 | 章节标题连成叙事线；用删章测试砍掉支线，或压成一句注脚 |
 | 标题被平台判“含特殊字符”，发不出去 | 用了 `@`、逗号、顿号、感叹号、括号、小数点 | `check_title.py --file out/发布文案.md`；逗号换空格，`@` 换“叫/点名/提醒”，小数改整数或中文 |
 | 标题在列表页被截断 | 整句长标题 | ≤16 字；主推用“数字 + 反差”，备选用最短的反差句 |
+| 配音“跟之前几条片子不一样” | 段间 f0 漂移（262 vs 参考 239）+ 叠了两次 atempo | `regen_chunk2.py` 逐段挑种子；`TEMPO_MAP` 一次 atempo；`check_voice.py --baseline` |
+| 声音“闷、拖”、像换了个人 | atempo <0.80，或 0.78 再补 0.91 叠加 | 每段只做一次 atempo 且 ≥0.80；超了就重生成更慢的段 |
+| 切点落进句中（数字句） | 中文数字被 Whisper 转成 6007/5589，字符匹配跳过 | `fix_boundaries.py`（静音判据）；别按字数估 |
+| `clean_audio` 后还是“每节卡一下” | 没有 `*_raw.wav`，atempo 叠在已处理音频上 | 先 `regen_chunk2.py` / `tts_chunks.py` 出 raw（脚本现在会 WARN） |
 
 ## 完成标准
 
@@ -580,7 +595,10 @@ python check_title.py --file out/发布文案.md     # 不过就改到过，退�
 - [ ] 前 3 秒有钩子；静止标题不超过 1 秒。
 - [ ] 有一句写下来的主题句；前 20 秒能听到它；章节标题连起来是一条叙事线；删掉后不影响主题的章节已砍掉或压成注脚。
 - [ ] 35–50 个 beat；总长 2:45–3:30（用户明确要 5 分钟时按比例放宽到 60–70 个 beat / 4:30–5:00，但仍只围绕一条主线）；字幕每行 ≤ 15 个中文字。
-- [ ] 2–4 个长段配音；段间基频极差 ≤30Hz 且落在参考 ±18%；4.5–6.5 字/秒；`check_voice.py` PASS。
+- [ ] 2–4 个长段配音；段间基频极差 ≤18Hz 且落在参考 ±8%；4.5–6.5 字/秒；`check_voice.py` PASS。
+- [ ] 与上一版对比过：`check_voice.py --baseline 上一版/audio` 通过（MFCC ≥0.99；Δf0 >15Hz 会 WARN，听一下语气）。
+- [ ] 每段只做一次 atempo（`TEMPO_MAP`），没有 <0.80 的减速；没有叠两次。
+- [ ] `fix_boundaries.py` 跑过；中文数字那几句的切点落在开口上，上一句完整播完。
 - [ ] 音频连续，没有按 beat 切；切点经 ASR 对齐。
 - [ ] 无叠化；每个镜头都在动；亚像素推拉；下划线用 bbox，大字和小标签都留 12–16px 空隙。
 - [ ] **版式轮换达标**：≥6 种版式、同版式不连续、`text` ≤20%、每 15–20 秒换一次类型；结构版式的字没有顶出安全区、没有被截成半句。
@@ -610,11 +628,13 @@ python check_title.py --file out/发布文案.md     # 不过就改到过，退�
 复制到项目里、和 `script_data.py` 放在一起；`voices/` 也要一起拷（内置 q1 音色）。默认假设 `audio/chunk_0..N.wav`、`out/`、Windows Python/ffmpeg；音色优先用 `audio/prompt_ref.wav`，没有就用 `voices/<VOICE>/`。
 
 - `scripts/tts_chunks.py` — VoxCPM2 长段配音（默认 q1 音色，自动套用 `voice.json` 的 atempo）。
-- `scripts/clean_audio.py` — 统一 atempo、去段首瞬态、压缩长停顿（修“每节卡一下”）。
-- `scripts/regen_chunk.py` — 音色漂移时按种子重生成某段，挑基频/频谱最像的。
+- `scripts/clean_audio.py` — 逐段 atempo（`TEMPO_MAP`，从 raw 一次到位；没有 raw 时 WARN 会叠加）、去段首瞬态、压缩长停顿（修“每节卡一下”）。
+- `scripts/regen_chunk2.py` — **音色漂移主力**：每段按 4 个种子生成，候选落 `audio/cand/`，按参考音 f0/LTAS 挑最像的一次。
+- `scripts/regen_chunk.py` — 老版单段重生成（保留兼容，参数写死目标 243Hz）。
 - `scripts/make_voice_ref.py` — 从视频/音频抽音色：词级时间戳 → 切片 → 去伴奏 → `voices/<name>/`。
-- `scripts/check_voice.py` — 量段基频/LTAS/语速，判断音色是否达标。
+- `scripts/check_voice.py` — 量段基频/LTAS/MFCC/语速；门禁参考音 ±8%、段间 ≤18Hz；`--baseline 上一版/audio` 对比系列音色；TEMPO<0.80 会 WARN。
 - `scripts/align_asr.py` — 16kHz faster-whisper 词级对齐 → `asr_times.json`。
+- `scripts/fix_boundaries.py` — 只用静音判据修切点（中文数字被转写错时用），`--dry` 先看会改哪几处。
 - `scripts/build_audio_utils.py` — 垫乐、音效、混音、SRT、解说稿。
 - `scripts/build_audio_cont.py` — 连续音频 + 分轨 + `timeline.json`；切点吸附到开口。
 - `scripts/make_cover.py` — 从成片抽钩子镜头做封面（1080×1920），可加 `--ratios 6:7` 出分享卡比例。
@@ -627,7 +647,7 @@ python check_title.py --file out/发布文案.md     # 不过就改到过，退�
 - `scripts/qa_video.py` — CFR/解码/帧差/响度检查。
 - `scripts/check_audio.py` — 声音门禁：开头瞬态/爆音/长停顿/切点对齐/响度。
 - `scripts/contact_sheet.py` — 按镜头抽帧拼成 `配图对照.png`，人工核对配图。
-- `scripts/project_config.py` — 共享 `EXCLUDE`，可选 `TEMPO` / `VOICE`。
+- `scripts/project_config.py` — 共享 `EXCLUDE`，可选 `TEMPO` / `TEMPO_MAP`（逐段 atempo）/ `VOICE`。
 - `scripts/ffmpeg_path.py` — 自动定位 ffmpeg/ffprobe（避开 WSL 下 `%USERNAME%` 乱码）。
 
 环境变量：`FFMPEG`、`FFPROBE`、`FONT_BOLD`、`FONT_MED`、`ASSET_DIR`（或 `render.py --assets <dir>`；WSL 不会自动透传任意环境变量，除非写进 `WSLENV`）、`VOICE`、`TEMPO`、`PROMPT_WAV`、`REFERENCE_WAV`、`PROMPT_TEXT`、`VOX_MODEL`、`VOX_STEPS`、`VOX_SEED`、`VOX_CFG`、`VIDEO_BRAND`、`VIDEO_TITLE`、`VIDEO_SUBTITLE`、`VIDEO_KICKER`、`VIDEO_CREDIT`、`VIDEO_END_*`、`VIDEO_SOURCE`、`VIDEO_TITLE_GHOST`、`VIDEO_DATA_SOURCE`、`VIDEO_OUT`、`SOURCE_VIDEO`（参考视频路径，优先于 `script_data.VIDEO_SRC`）。
