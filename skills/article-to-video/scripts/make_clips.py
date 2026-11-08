@@ -12,6 +12,9 @@ JPEG，最稳也最快。
         "00_00": (0.15, 3.30),
         "01_02": (23.00, 25.50),
     }
+    CLIP_FILE = {"01_02": "../03/02.mp4"}      # 可选：个别片段换一条源片（两条视频混着用）
+    CLIP_CROP = {"01_02": "600:640:0:70"}      # 可选：先裁 w:h:x:y（竖屏素材取竖构图）
+    CLIP_SIZE = {"01_02": (475, 760)}          # 可选：覆盖卡片尺寸（phone 版式要用竖尺寸）
 
     # beat 元组第 9 位标 True，表示这个镜头用同名片段
     ("...", "...", "回形针", "hook", "orange", "真实研究", "bf1.png", "", True),
@@ -70,6 +73,9 @@ def main():
 
     src = source_video()
     clips = getattr(script_data, "CLIP_SRC", {})
+    clip_file = getattr(script_data, "CLIP_FILE", {})
+    clip_crop = getattr(script_data, "CLIP_CROP", {})
+    clip_size = getattr(script_data, "CLIP_SIZE", {})
     want = [b for b in script_data.flatten() if b.get("clip")]
     if not want:
         raise SystemExit("script_data 里没有 beat 标 clip（beat 元组第 9 位写 True）")
@@ -84,14 +90,23 @@ def main():
         start, end = clips[cid]
         if end <= start:
             raise SystemExit(f"{cid} 的 CLIP_SRC 区间不合法：{start}-{end}")
+        # 个别片段可以换一条源片（两条视频混着用）+ 先裁再缩（竖屏素材取竖构图）
+        use_src = src
+        if cid in clip_file:
+            p2 = Path(clip_file[cid])
+            use_src = p2 if p2.is_absolute() else (BASE / p2).resolve()
+        w, h = clip_size.get(cid, (a.width, a.height))
+        vf = ""
+        if cid in clip_crop:
+            vf += f"crop={clip_crop[cid]},"
+        vf += f"scale={w}:{h}:flags=lanczos,unsharp=5:5:0.45:5:5:0"
         d = OUT / cid
         d.mkdir(parents=True, exist_ok=True)
         for old in d.glob("f_*.jpg"):
             old.unlink()
         cmd = [ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
-               "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(src),
-               "-vf", f"scale={a.width}:{a.height}:flags=lanczos,"
-                      "unsharp=5:5:0.45:5:5:0",
+               "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(use_src),
+               "-vf", vf,
                "-r", str(FPS), "-q:v", "2", "-start_number", "1",
                str(d / "f_%04d.jpg")]
         subprocess.run(cmd, check=True)

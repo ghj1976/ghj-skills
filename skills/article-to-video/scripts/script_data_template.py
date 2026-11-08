@@ -9,14 +9,15 @@ beat 元组（后几项可省）：
   (口播, 字幕, 大字, 版式, 主色, 小标签, 图片, 数据卡说明, 是否用动态片段, extras)
 
 版式（layout）：
-  card    图片卡（16:9 铺满；超宽横幅自动走深色卡底）
+  card    图片卡 / 16:9 片段卡（铺满 1080×608；超宽横幅自动走深色卡底）
   poster  竖构图/近方形插画：卡片按图收窄，图铺满卡片（配合 image_margins.py 裁空白边）
   cover   竖幅照片整屏铺满（近 9:16 的实拍图用这个，别塞进 16:9 卡片）
   text    纯文字卡（观点/一句话）
   data    数据卡（主数字 count-up + 说明行）
   hook    全屏大字钩子
-  full    更高的图片卡
-  bleed   整屏动态片段（第 9 位写片段 key）
+  full    更高的图片卡（配图用；片段别用，会被拉伸）
+  phone   竖屏/竖构图**片段**整帧进设备卡，不裁高度（手机录屏、竖构图资产卡；尺寸见 CLIP_SIZE）
+  diptych 左右对照：{"left":{"img","label"},"right":{"img","label"},"note"}（换装前/换装后）
 
 结构版式（不依赖图片，数据和文案写在 extras 里；一条视频至少用 4 种，见 SKILL.md）：
   chat     {"title","badge","msgs":[{"who","role":"user|agent","text","tag"}]}
@@ -28,6 +29,9 @@ beat 元组（后几项可省）：
   list     {"items":[{"k":"连续","d":"跨群聊和 PR 保持上下文"}],"note"}
   terminal {"title","lines":[{"k":"add|del|ctx|meta","t"}],"status","note"}
   quote    {"text","by"}
+
+## 注意：phone / full / diptych 这三种版式的卡片从 y≈470 起，
+## render.py 会把大字自动缩到 150px、基准线抬到 240/262，否则 200px 的大字会压到卡片上。
 
 图片路径：`render.py` 先找 `--assets` 目录，找不到再回落到项目 `assets/`。
 原素材只读引用；用 `python image_margins.py ../06 --crop` 裁过空白边的衍生图放 `assets/`，

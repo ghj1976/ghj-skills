@@ -7,6 +7,8 @@
   - poster：竖构图/近方形插画，卡片按图片比例收窄，让图铺满卡片（先裁掉原图空白边）；
   - cover：竖幅照片整屏铺满，上下渐变 scrim 给大字和字幕让位；
   - 动态 B-roll（clip）：读 clips/<beat_id>/ 的帧序列，按 beat 时长线性播放。
+  - phone：竖屏/竖构图片段整帧进「设备卡」，**不裁高度**（手机录屏、竖构图资产卡用这个）；
+  - diptych：左右两张对照图（从片段里抽的前后帧），讲「换装前 / 换装后」这类对比。
 
 结构版式（不依赖图片，靠程序画，数据和文案写在 beat 的 extras 里）：
   - chat     群聊/消息流：左人右 AI，气泡逐条出现，可带“没人@它”之类的标签
@@ -257,9 +259,22 @@ def draw_big(frame, b, lt):
     big = b.get("big")
     if not big:
         return
-    f, size = fit_big(big)
+    # phone / full / diptych 这几种版式的卡片从 y≈470 起，大字必须缩一号，
+    # 否则 200px 的「换一身」会直接压到卡片和标签上（实测正好差 30px）
+    _start = 200
+    if b["layout"] in ("phone", "full", "diptych"):
+        _start = 150
+    f, size = fit_big(big, start=_start)
     # 结构版式下方有界面/图表，大字整体上移 30px，给下面的卡片留出呼吸空间
-    base = 262 if b["layout"] in STAGE_LAYOUTS else 292
+    # phone 版式的竖卡从 y≈470 起，大字再缩一号，否则会压到卡片顶边
+    if b["layout"] == "phone":
+        base = 240
+    elif b["layout"] in ("diptych", "full"):
+        base = 262
+    elif b["layout"] in STAGE_LAYOUTS:
+        base = 262
+    else:
+        base = 292
     y = base + int(10 * (1 - ease_out(lt / 0.28)))
     d.text((63, y + 4), big, font=f, fill=(0, 0, 0), stroke_width=5, stroke_fill=(0, 0, 0))
     d.text((60, y), big, font=f, fill=ac)
@@ -908,6 +923,75 @@ def clip_card(frame, b, lt, y=540, h=608):
     return frame
 
 
+def clip_phone_card(frame, b, lt, y=470):
+    """竖屏/竖构图片段：整帧进「设备卡」，**不裁高度**。
+
+    手机录屏（600×800）和从 16:9 里裁出来的竖构图资产卡（400×640）都走这里：
+    片段帧按原比例摆放，圆角 + 描边 + 投影，看上去是一块屏幕，而不是被切掉一截的截图。
+    片段帧的分辨率就是卡片尺寸（`make_clips.py` 的 `CLIP_SIZE` 决定），这里不再缩放。
+    """
+    cid = b["clip"]
+    meta = clip_meta(cid)
+    n = int(meta["frames"])
+    dur = max(0.2, float(b.get("duration") or 1.0))
+    idx = int(min(n - 1, max(0.0, lt / dur) * n)) + 1
+    im = Image.open(CLIPS / cid / f"f_{idx:04d}.jpg").convert("RGB")
+    w, h = im.size
+    x = (W - w) // 2
+    # 投影
+    pad = 30
+    mask = Image.new("L", (w + pad * 2, h + pad * 2), 0)
+    ImageDraw.Draw(mask).rectangle([pad, pad, pad + w - 1, pad + h - 1], fill=105)
+    mask = mask.filter(ImageFilter.GaussianBlur(16))
+    frame.paste((0, 0, 0), (x - pad, y - pad + 10), mask)
+    # 圆角 + 描边
+    rad = 26
+    rmask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(rmask).rounded_rectangle([0, 0, w - 1, h - 1], radius=rad, fill=255)
+    frame.paste(im, (x, y), rmask)
+    d = ImageDraw.Draw(frame)
+    d.rounded_rectangle([x, y, x + w - 1, y + h - 1], radius=rad,
+                        outline=(84, 96, 116), width=2)
+    d.rectangle([x, y, W - x, y + 3], fill=accent(b))
+    return frame
+
+
+def draw_diptych(frame, b, lt):
+    """左右对照：两张图并排 + 各自标签，讲「换装前 / 换装后」。
+
+    extras = {"left": {"img","label"},"right": {"img","label"},"note":""}
+    两张图按同高摆放（等高更整齐），各自带 1px 描边和标签下划线。
+    图从片段里抽：`ffmpeg -ss <t> -i src -frames:v 1 -vf crop=w:h:x:y -y assets/x.png`
+    """
+    ex = b.get("extras") or {}
+    ac = accent(b)
+    d = ImageDraw.Draw(frame)
+    y0, h = 508, 650
+    sides = []
+    for key in ("left", "right"):
+        c = ex.get(key) or {}
+        src = fg_for(c["img"])
+        nw = max(1, int(round(src.width * h / src.height)))
+        sides.append((src.resize((nw, h), Image.LANCZOS), nw, c))
+    total = sum(nw for _, nw, _ in sides) + ex.get("gap", 34)
+    x = (W - total) // 2
+    for i, (art, nw, c) in enumerate(sides):
+        p = ease_out(clamp01((lt - i * 0.18) / 0.36))
+        off = int(16 * (1 - p))
+        lab = c.get("label") or ""
+        if lab:
+            draw_eyebrow(d, x, y0 - 46 + off, lab, 27, (208, 216, 228), ac)
+        frame.paste(art, (x, y0 + off))
+        d.rectangle([x, y0 + off, x + nw - 1, y0 + h + off - 1],
+                    outline=(74, 84, 100), width=2)
+        x += nw + ex.get("gap", 34)
+    note = ex.get("note")
+    if note:
+        d.text((60, y0 + h + 26), ellip(note, font(23, False), 940),
+               font=font(23, False), fill=(142, 154, 172))
+    return frame
+
+
 def poster_card(frame, b, lt, y=540, h=800):
     """竖构图插画（原图左右大片空白）：卡片按插画比例收窄，让图铺满卡片。
 
@@ -1006,7 +1090,8 @@ def beat_frame(b, lt, t, vis_dur=None):
     img = b.get("img")
     # poster/cover 不要整屏模糊底；结构版式（chat/layers/...）一律用深色渐变底：
     # 它们读起来是界面/图表，垫一张照片反而抢字。
-    if b["layout"] in ("data", "poster", "cover") or b["layout"] in STAGE_LAYOUTS:
+    if b["layout"] in ("data", "poster", "cover", "phone", "diptych") \
+            or b["layout"] in STAGE_LAYOUTS:
         bg_img = None
     else:
         bg_img = img
@@ -1015,7 +1100,9 @@ def beat_frame(b, lt, t, vis_dur=None):
     else:
         frame = BG.copy()
     has_clip = bool(b.get("clip")) and (CLIPS / b["clip"] / "meta.json").exists()
-    if b["layout"] == "cover" and img:
+    if b["layout"] == "phone" and has_clip:
+        clip_phone_card(frame, b, lt)
+    elif b["layout"] == "cover" and img:
         cover_card(frame, b, lt)
     elif b["layout"] == "poster" and img:
         poster_card(frame, b, lt)
@@ -1040,6 +1127,8 @@ def beat_frame(b, lt, t, vis_dur=None):
     # 结构版式：大字画完之后在下方舞台区画界面/图表（自带分段入场动画）
     if b["layout"] in STAGE_DRAW:
         STAGE_DRAW[b["layout"]](frame, b, lt)
+    elif b["layout"] == "diptych":
+        draw_diptych(frame, b, lt)
     # 每个镜头单独做一次线性推近 + 光扫：按 beat 计时，切镜头时重置
     # （按场景计时会摊到 20–30 秒上，每帧只动 0.0001，看起来就是静止画面）
     prog = (t - b["start"]) / max(0.9, b["end"] - b["start"])
