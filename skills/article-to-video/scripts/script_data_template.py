@@ -30,8 +30,14 @@ beat 元组（后几项可省）：
   terminal {"title","lines":[{"k":"add|del|ctx|meta","t"}],"status","note"}
   quote    {"text","by"}
 
-## 注意：phone / full / diptych 这三种版式的卡片从 y≈470 起，
-## render.py 会把大字自动缩到 150px、基准线抬到 240/262，否则 200px 的大字会压到卡片上。
+## 注意：大字的位置和字号由 render.py 的 layout_text_box() 统一决定（card 268 / full 236 /
+## phone 232 / 结构版式 262 / text+窗口 172），再按真实字形 bbox 收到「不压卡片」为止。
+## 不要再手写 200px；改完跑 check_text_gap.py。
+
+## 「视频 + 文字」：任何版式都可以在元组第 9 位标 True 带一段原片（CLIP_SRC 里给区间）。
+##   宽素材（CLIP_SIZE=(1080,764)）  -> text/quote/data 变成「上文字 + 下满幅窗口」
+##   竖素材（CLIP_SIZE=(720,1280)）  -> 当模糊动态底（图表类、或同一段素材要复用）
+## 纯色文字卡一条片子别超过 20%，剩下的都该有画面（见 SKILL.md「视频 + 文字」一节）。
 
 图片路径：`render.py` 先找 `--assets` 目录，找不到再回落到项目 `assets/`。
 原素材只读引用；用 `python image_margins.py ../06 --crop` 裁过空白边的衍生图放 `assets/`，
@@ -72,6 +78,11 @@ SCENES = [
             ("被风控封了，就自己找密钥。",
              "被风控封了\n就自己找密钥",
              "被封之后", "hook", "cyan", "越界操作", IMG["detail"]),
+            # 「上文字 + 下满幅原片」：第 9 位 True，CLIP_SRC 给 26 秒那一段，
+            # CLIP_CROP="3056:2150:0:5"、CLIP_SIZE=(1080,764)；大字会自动上移到 y≈172
+            ("然后身体自己动了：腰一拧，前爪找方向，尾巴当舵。",
+             "身体自己动了\n腰一拧 尾巴当舵",
+             "身体先动", "text", "orange", "翻身反射", None, "", True),
             # 第 10 位 extras：结构版式的数据（这里画一条群聊消息流）
             ("群里没人 @ 它，它自己认领了这件事。",
              "没人 @ 它\n它自己认领",

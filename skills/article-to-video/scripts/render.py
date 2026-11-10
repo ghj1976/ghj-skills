@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from ffmpeg_path import ffmpeg as _ffmpeg
 
@@ -66,6 +66,9 @@ END_SOURCE = os.environ.get("VIDEO_SOURCE", "资料来源：Swarmcha.se 报告 /
 DATA_SOURCE = os.environ.get("VIDEO_DATA_SOURCE", "数据来自公开资料")
 # 开场第一句就是原声/钩子时，不要那 1 秒静态标题卡：VIDEO_NO_TITLE=1
 NO_TITLE = os.environ.get("VIDEO_NO_TITLE", "0") == "1"
+if not NO_TITLE:
+    print("[warn] 标题卡开启：0–1 秒是一张静态标题卡。若开场第一句就是钩子，"
+          "按「开场铁律」设 VIDEO_NO_TITLE=1。", flush=True)
 
 WHITE = (247, 248, 250)
 MUTED = (158, 167, 180)
@@ -250,6 +253,41 @@ def draw_eyebrow(d, x, y, text, size, color, ac, gap=EYE_GAP, upper=False):
     return ly
 
 
+_MEASURE = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+
+
+def layout_text_box(b):
+    """大字在某个版式里的（字号起点, 基线, 下划线最低 y）。
+
+    为什么单独抽出来：`card` 的卡片从 y=540 起，而 200px 的中文字形下缘在
+    base+251、下划线再 +16——写死"200px"就会压进画面 19px。渲染和
+    `check_text_gap.py` 必须用同一套算式，否则检查脚本和成片会各说各话。
+    """
+    lay = b["layout"]
+    big = b.get("big") or ""
+    if lay in ("phone", "diptych"):
+        return 150, 232, 442
+    if lay == "full":
+        return 150, 236, 442
+    if lay in STAGE_LAYOUTS:
+        return 200, 262, STAGE_TOP - 28
+    if lay == "text":
+        if has_win(b):
+            start = 200 if len(big) <= 4 else 172 if len(big) <= 6 else 146
+            return start, 172, WIN_Y - 28
+        return 200, 690, 1150
+    return 200, 268, 512          # card / hook
+
+
+def fit_text_in_box(text, start, base, lim, floor=72):
+    """按宽度收完，再按真实字形 bbox 收，直到「下划线底」不越过 lim。"""
+    f, size = fit_big(text, start=start)
+    while size > floor and _MEASURE.textbbox((60, base), text, font=f)[3] + 16 > lim:
+        size -= 4
+        f = font(size)
+    return f, size
+
+
 def draw_big(frame, b, lt):
     if b["layout"] == "text":
         return draw_text_layout(frame, b, lt)
@@ -261,20 +299,8 @@ def draw_big(frame, b, lt):
         return
     # phone / full / diptych 这几种版式的卡片从 y≈470 起，大字必须缩一号，
     # 否则 200px 的「换一身」会直接压到卡片和标签上（实测正好差 30px）
-    _start = 200
-    if b["layout"] in ("phone", "full", "diptych"):
-        _start = 150
-    f, size = fit_big(big, start=_start)
-    # 结构版式下方有界面/图表，大字整体上移 30px，给下面的卡片留出呼吸空间
-    # phone 版式的竖卡从 y≈470 起，大字再缩一号，否则会压到卡片顶边
-    if b["layout"] == "phone":
-        base = 240
-    elif b["layout"] in ("diptych", "full"):
-        base = 262
-    elif b["layout"] in STAGE_LAYOUTS:
-        base = 262
-    else:
-        base = 292
+    start, base, lim = layout_text_box(b)
+    f, size = fit_text_in_box(big, start, base, lim)
     y = base + int(10 * (1 - ease_out(lt / 0.28)))
     d.text((63, y + 4), big, font=f, fill=(0, 0, 0), stroke_width=5, stroke_fill=(0, 0, 0))
     d.text((60, y), big, font=f, fill=ac)
@@ -289,6 +315,21 @@ def draw_big(frame, b, lt):
 def draw_text_layout(frame, b, lt):
     d = ImageDraw.Draw(frame)
     ac = accent(b)
+    if has_win(b):
+        # 下面有满幅原片窗口：大字整体上移，去掉装饰引号
+        draw_eyebrow(d, 60, 118, b.get("eyebrow") or "", 28, ac, ac)
+        big = b.get("big") or ""
+        start, base, lim = layout_text_box(b)
+        f, size = fit_text_in_box(big, start, base, lim)
+        y = base + int(12 * (1 - ease_out(lt / 0.28)))
+        d.text((63, y + 4), big, font=f, fill=(0, 0, 0))
+        d.text((60, y), big, font=f, fill=ac)
+        bbox = d.textbbox((60, y), big, font=f)
+        ly = bbox[3] + 16
+        w = int(min(320, f.getlength(big) * 0.55) * ease_out(lt / 0.35))
+        if w:
+            d.rectangle([60, ly, 60 + w, ly + 8], fill=ac)
+        return
     d.text((44, 350), "“", font=font(240), fill=(ac[0] // 4, ac[1] // 4, ac[2] // 4))
     draw_eyebrow(d, 60, 600, b.get("eyebrow") or "", 28, ac, ac)
     big = b.get("big") or ""
@@ -311,6 +352,17 @@ STAGE_LAYOUTS = ("chat", "layers", "flow", "compare", "bars", "kpi",
                  "list", "terminal", "quote")
 STAGE_TOP = 536
 STAGE_BOT = 1180
+
+# 「视频 + 文字」的两种做法：
+#  1) 文字类（text/quote/data）：大字在上，原片按**原始画幅**放在 y=470–1234 的满幅窗口里。
+#     这批素材是 1.414:1，硬裁 9:16 只剩 40% 宽——实测鸽子被裁成一面白墙、猫只剩一截，
+#     所以不做竖裁，宁可把文字挪到画面上方。
+#  2) 图表类（list/compare/bars/chat/...）：面板要占住 536–1180，原片只能当模糊底，
+#     否则图表和画面互相抢；压暗 + 高斯模糊后只保留运动感。
+CLIP_WINDOW_LAYOUTS = {"text", "quote", "data"}
+CLIP_BG_LAYOUTS = {"list", "compare", "bars", "kpi",
+                   "chat", "flow", "layers", "terminal"}
+WIN_Y, WIN_H = 470, 764          # 满幅原片窗口（1080 × 764 = 1.414:1，不裁不拉伸）
 
 
 def clamp01(x):
@@ -430,7 +482,7 @@ def draw_chat(frame, b, lt):
     while total > avail and size > 22:
         size -= 2
         f, items, total = build(size)
-    gap = int(min(18, max(0, (avail - total) / max(1, len(items) - 1)))) if len(items) > 1 else 0
+    gap = int(min(40, max(0, (avail - total) / max(1, len(items) - 1)))) if len(items) > 1 else 0
     dur = max(1.2, float(b.get("duration") or 2.0))
     step = min(0.5, dur * 0.55 / max(1, len(items)))
     yy = y0 + 54 + 40
@@ -828,7 +880,7 @@ def draw_quote(frame, b, lt):
     text = ex.get("text") or b.get("big") or ""
     # 引语是整段话，不能按“单行塞进 860px”去缩字号（会缩到 44px 还把句号甩到下一行）。
     # 按最多 3 行反推字号，并保证最后一行不是孤零零的标点。
-    size = 72
+    size = 54 if has_win(b) else 72
     while size > 40:
         f = font(size)
         lines = wrap_cjk(text, f, 860)
@@ -837,12 +889,15 @@ def draw_quote(frame, b, lt):
             break
         size -= 4
     f = font(size)
-    lines = fit_lines(text, f, 860, 4)
+    lines = fit_lines(text, f, 860, 3 if has_win(b) else 4)
     lh = int(size * 1.44)
     total = lh * len(lines)
     # 没有 big 时整块引语占满大字区 + 舞台区，不要顶在 536 以下留一大片空
-    top = 420 if not b.get("big") else STAGE_TOP + 20
-    y = top + max(0, (STAGE_BOT - top - 120 - total) // 2)
+    if has_win(b):
+        top = 150
+    else:
+        top = 420 if not b.get("big") else STAGE_TOP + 20
+    y = top if has_win(b) else top + max(0, (STAGE_BOT - top - 120 - total) // 2)
     p = ease_out(clamp01(lt / 0.4))
     bar_h = int((total + 6) * p)
     d.rectangle([58, y - 8, 64, y - 8 + bar_h], fill=ac)
@@ -850,7 +905,8 @@ def draw_quote(frame, b, lt):
         la = clamp01((lt - i * 0.07) / 0.25)
         if la <= 0:
             break
-        d.text((98, y), ln, font=f, fill=(240, 245, 252))
+        d.text((98, y), ln, font=f, fill=(240, 245, 252),
+               stroke_width=3, stroke_fill=(4, 6, 10))
         y += lh
     by = ex.get("by")
     if by:
@@ -920,6 +976,67 @@ def clip_card(frame, b, lt, y=540, h=608):
     frame.paste(im, (0, y))
     d = ImageDraw.Draw(frame)
     d.rectangle([0, y, W, y + 3], fill=accent(b))
+    return frame
+
+
+_WIDE = {}
+
+
+def clip_is_wide(cid):
+    """片段的画幅决定「视频+文字」的做法：宽片段进窗口，竖片段只当模糊底。"""
+    if cid not in _WIDE:
+        try:
+            _WIDE[cid] = Image.open(CLIPS / cid / "f_0001.jpg").width > 900
+        except Exception:
+            _WIDE[cid] = False
+    return _WIDE[cid]
+
+
+def has_win(b):
+    cid = b.get("clip") or ""
+    return bool(cid) and b["layout"] in (CLIP_WINDOW_LAYOUTS | CLIP_BG_LAYOUTS) \
+        and clip_is_wide(cid)
+
+
+def clip_bg_fill(b, lt, dim=0.62, stage=True):
+    """图表版式的整屏底：9:16 铺满 + 高斯模糊 + 压暗，只保留「画面在动」。"""
+    cid = b["clip"]
+    meta = clip_meta(cid)
+    n = int(meta["frames"])
+    dur = max(0.2, float(b.get("duration") or 1.0))
+    idx = int(min(n - 1, max(0.0, lt / dur) * n)) + 1
+    im = Image.open(CLIPS / cid / f"f_{idx:04d}.jpg").convert("RGB")
+    im = ImageOps.fit(im, (W, H), method=Image.LANCZOS).filter(
+        ImageFilter.GaussianBlur(26))
+    im = ImageEnhance.Brightness(im).enhance(dim)
+    ys = np.arange(H, dtype=np.float32)
+    a = 0.22 * (1 - np.clip(ys / 240.0, 0, 1))
+    a += 0.55 * np.clip((ys - 1150) / 170.0, 0, 1)
+    a += 0.30 * np.clip((ys - 470) / 120.0, 0, 1) * (1 - np.clip((ys - 1150) / 100.0, 0, 1))
+    a = np.clip(a, 0, 0.86)
+    rows = Image.fromarray(np.repeat((a * 255).astype(np.uint8)[:, None], W, axis=1), "L")
+    return Image.composite(Image.new("RGB", (W, H), (4, 6, 10)), im, rows)
+
+
+def clip_window(frame, b, lt):
+    """文字类版式底下的「满幅原片窗口」：1080×764，按原始画幅贴，不裁不拉伸。
+
+    画面上方留给大字（y≈130–420），下方留给字幕（y≈1400）。窗口本身自带
+    逐帧推进，所以这些镜头不再套整帧推近。
+    """
+    cid = b["clip"]
+    meta = clip_meta(cid)
+    n = int(meta["frames"])
+    dur = max(0.2, float(b.get("duration") or 1.0))
+    idx = int(min(n - 1, max(0.0, lt / dur) * n)) + 1
+    im = Image.open(CLIPS / cid / f"f_{idx:04d}.jpg").convert("RGB")
+    if im.size != (W, WIN_H):
+        im = ImageOps.fit(im, (W, WIN_H), method=Image.LANCZOS)
+    frame.paste(im, (0, WIN_Y))
+    d = ImageDraw.Draw(frame)
+    d.rectangle([0, WIN_Y, W, WIN_Y + 3], fill=accent(b))
+    d.rectangle([0, WIN_Y, 2, WIN_Y + WIN_H], fill=(30, 36, 48))
+    d.rectangle([0, WIN_Y + WIN_H - 2, W, WIN_Y + WIN_H], fill=(18, 22, 30))
     return frame
 
 
@@ -1095,17 +1212,29 @@ def beat_frame(b, lt, t, vis_dur=None):
         bg_img = None
     else:
         bg_img = img
-    if bg_img:
+    has_clip = bool(b.get("clip")) and (CLIPS / b["clip"] / "meta.json").exists()
+    is_stage = b["layout"] in STAGE_LAYOUTS
+    win_clip = has_clip and (b["layout"] in CLIP_WINDOW_LAYOUTS
+                             or b["layout"] in CLIP_BG_LAYOUTS) and clip_is_wide(b["clip"])
+    bg_clip = has_clip and not win_clip and (b["layout"] in CLIP_BG_LAYOUTS
+                                             or b["layout"] in CLIP_WINDOW_LAYOUTS)
+    if win_clip:
+        frame = BG.copy()
+        clip_window(frame, b, lt)
+    elif bg_clip:
+        frame = clip_bg_fill(b, lt)
+    elif bg_img:
         frame = bg_for(bg_img).copy()
     else:
         frame = BG.copy()
-    has_clip = bool(b.get("clip")) and (CLIPS / b["clip"] / "meta.json").exists()
     if b["layout"] == "phone" and has_clip:
         clip_phone_card(frame, b, lt)
     elif b["layout"] == "cover" and img:
         cover_card(frame, b, lt)
     elif b["layout"] == "poster" and img:
         poster_card(frame, b, lt)
+    elif bg_clip or win_clip:
+        pass                      # 整屏底 / 满幅窗口已经在上面画过，不再放卡片
     elif has_clip:
         clip_card(frame, b, lt, y=540 if b["layout"] != "full" else 470,
                   h=608 if b["layout"] != "full" else 760)
@@ -1113,7 +1242,7 @@ def beat_frame(b, lt, t, vis_dur=None):
         image_card(frame, b, lt, y=540 if b["layout"] != "full" else 470,
                    h=608 if b["layout"] != "full" else 760,
                    duration=vis_dur)
-    if b["layout"] == "text":
+    if b["layout"] == "text" and not (bg_clip or win_clip):
         # 只在底图偏亮时压暗；深色底图再加 scrim 只会让画面发灰
         mean = bg_mean(bg_img)
         alpha = int(min(140, max(0, (mean - 42) * 2.6)))
@@ -1169,17 +1298,30 @@ def draw_data(frame, b, lt):
     num_h = bbox0[3] - bbox0[1]
     eye_h = 60
     note_h = 56 if note else 0
-    block = eye_h + 18 + num_h + (note_h + 26 if note else 0) + 46 + 34
-    top = 260 + max(0, int((820 - block) / 2))
+    if has_win(b):
+        top = 140
+    else:
+        block = eye_h + 18 + num_h + (note_h + 26 if note else 0) + 46 + 34
+        top = 260 + max(0, int((820 - block) / 2))
 
     label = b.get("eyebrow") or "关键数字"
     draw_eyebrow(d, 60, top, label, 32, MUTED, ac)
 
     ny = top + eye_h + 18
-    d.text((62, ny), text, font=f, fill=ac)
+    d.text((62, ny), text, font=f, fill=ac, stroke_width=4, stroke_fill=(4, 6, 10))
     y = ny + bbox0[3]
+    if has_win(b):
+        # 说明行放到原片窗口下面，别压在画面上
+        if note:
+            d.text((60, WIN_Y + WIN_H + 16), note, font=font(34, False),
+                   fill=(206, 214, 226))
+        w = int(320 * ease_out(lt / 0.6))
+        if w:
+            d.rectangle([62, WIN_Y + WIN_H + 62, 62 + w, WIN_Y + WIN_H + 68], fill=ac)
+        return
     if note:
-        d.text((62, y + 18), note, font=font(36, False), fill=(214, 219, 228))
+        d.text((62, y + 18), note, font=font(36, False), fill=(226, 231, 240),
+               stroke_width=3, stroke_fill=(4, 6, 10))
         y += 18 + note_h
     w = int(360 * ease_out(lt / 0.6))
     if w:
