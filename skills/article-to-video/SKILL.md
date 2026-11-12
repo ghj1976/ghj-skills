@@ -273,7 +273,7 @@ python article_prep.py "E:\obsidian\推文\SRE\某篇文章.md"
 1. 读 `out/article_digest.md`：**先看“字数 → 时长预估”**，原文 2000 字就是 6 分钟，
    要 2:15–3:15 就得砍掉四到五成；砍不动就是还没找到突破点（阶段 1）。
 2. 改 `script_data.py`（场景、beat、`img` 文件名用 `article_prep.py` 给的 `img01.png`；要动态片段时写 `VIDEO_SRC` / `CLIP_SRC` 并在 beat 第 9 位标 `True`）。
-2. 选音色：默认用内置 `voices/q1`（女声，已去伴奏），直接就能配音；要换音色用 `make_voice_ref.py`，或把 4–8 秒的 `audio/prompt_ref.wav` 放进项目（项目内的会覆盖内置音色）。
+3. 选音色：默认用内置 `voices/q1`（女声，已去伴奏），直接就能配音；要换音色用 `make_voice_ref.py`，或把 4–8 秒的 `audio/prompt_ref.wav` 放进项目（项目内的会覆盖内置音色）。
 4. 改 `project_config.py` 的 `EXCLUDE`；配音、对齐、构建三个脚本共用这一份，保持一致。
 5. 如果图片不在项目目录，设置 `ASSET_DIR`，或渲染时传 `--assets <dir>`。
 6. **写 `run_env.sh` 并 `source` 它**：`PY`、`FFMPEG`、`VOX_MODEL`，以及 `VIDEO_BRAND` / `VIDEO_END_*` /
