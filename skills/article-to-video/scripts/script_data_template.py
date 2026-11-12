@@ -2,6 +2,8 @@
 """视频流程的分镜契约。
 
 复制到项目里改名为 `script_data.py`，替换示例内容。
+`IMG` 里的文件名直接用 `article_prep.py` 复制出来的 `assets/img01.png`
+（它会同时打印一份可直接粘的 `IMG = {...}`）。
 `flatten()` 必须返回包含以下字段的 dict：
   id, scene, text, sub, big, layout, accent, eyebrow, img, note, clip
 

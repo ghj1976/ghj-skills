@@ -275,7 +275,7 @@ def layout_text_box(b):
         if has_win(b):
             start = 200 if len(big) <= 4 else 172 if len(big) <= 6 else 146
             return start, 172, WIN_Y - 28
-        return 200, 690, 1150
+        return 200, 570, 1180
     return 200, 268, 512          # card / hook
 
 
@@ -330,12 +330,12 @@ def draw_text_layout(frame, b, lt):
         if w:
             d.rectangle([60, ly, 60 + w, ly + 8], fill=ac)
         return
-    d.text((44, 350), "“", font=font(240), fill=(ac[0] // 4, ac[1] // 4, ac[2] // 4))
-    draw_eyebrow(d, 60, 600, b.get("eyebrow") or "", 28, ac, ac)
+    d.text((44, 240), "“", font=font(240), fill=(ac[0] // 4, ac[1] // 4, ac[2] // 4))
+    draw_eyebrow(d, 60, 480, b.get("eyebrow") or "", 28, ac, ac)
     big = b.get("big") or ""
     start = 200 if len(big) <= 4 else 172 if len(big) <= 6 else 140
     f, size = fit_big(big, start=start, min_size=64, maxw=960)
-    y = 690 + int(12 * (1 - ease_out(lt / 0.28)))
+    y = 570 + int(12 * (1 - ease_out(lt / 0.28)))
     d.text((63, y + 4), big, font=f, fill=(0, 0, 0))
     d.text((60, y), big, font=f, fill=ac)
     bbox = d.textbbox((60, y), big, font=f)
@@ -1205,10 +1205,10 @@ def slow_zoom(frame, prog, amt=0.045):
 
 def beat_frame(b, lt, t, vis_dur=None):
     img = b.get("img")
-    # poster/cover 不要整屏模糊底；结构版式（chat/layers/...）一律用深色渐变底：
-    # 它们读起来是界面/图表，垫一张照片反而抢字。
-    if b["layout"] in ("data", "poster", "cover", "phone", "diptych") \
-            or b["layout"] in STAGE_LAYOUTS:
+    # poster/cover 不要整屏模糊底。结构版式（chat/layers/…）优先用**片段**当模糊动态底；
+    # 没有片段（整片只有文章插画）时才退到 beat 的配图，再压暗 0.38——否则一条片子里
+    # 十几张图表全是纯色渐变，就是观众说的“像 PPT 轮播”。
+    if b["layout"] in ("data", "poster", "cover", "phone", "diptych"):
         bg_img = None
     else:
         bg_img = img
@@ -1225,6 +1225,10 @@ def beat_frame(b, lt, t, vis_dur=None):
         frame = clip_bg_fill(b, lt)
     elif bg_img:
         frame = bg_for(bg_img).copy()
+        if b["layout"] in STAGE_LAYOUTS:
+            # 图表面板是半透明/不透明的，底下这张图只是“运动感”；压暗到 0.38 之后
+            # 面板与照片不抢字，纯色底也就只剩 data 卡了。
+            frame = Image.blend(frame, Image.new("RGB", (W, H), (4, 6, 10)), 0.38)
     else:
         frame = BG.copy()
     if b["layout"] == "phone" and has_clip:
@@ -1353,8 +1357,15 @@ def title_card(t):
 def endcard():
     frame = BG.copy()
     d = ImageDraw.Draw(frame)
-    d.text((W // 2, 700), END_L1, font=font(82), fill=WHITE, anchor="mm")
-    d.text((W // 2, 830), END_L2, font=font(100), fill=ORANGE, anchor="mm")
+    # 结尾卡的字按长度自动缩：100px × 9 个中文 = 1000px，1080 宽只剩 40px 边距，
+    # 手机上会被平台 UI 压住。统一收到 ≤960px（左右各留 60px 安全区）。
+    def _fit(s, size):
+        while size > 48 and font(size).getlength(s) > 960:
+            size -= 4
+        return font(size)
+
+    d.text((W // 2, 700), END_L1, font=_fit(END_L1, 82), fill=WHITE, anchor="mm")
+    d.text((W // 2, 830), END_L2, font=_fit(END_L2, 100), fill=ORANGE, anchor="mm")
     d.rectangle([W // 2 - 90, 920, W // 2 + 90, 926], fill=CYAN)
     d.text((W // 2, 1040), END_Q, font=font(38, False), fill=MUTED, anchor="mm")
     d.text((W // 2, 1118), END_CTA, font=font(28, False), fill=(120, 132, 150), anchor="mm")

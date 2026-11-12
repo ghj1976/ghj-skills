@@ -55,12 +55,12 @@ def num_cn(s):
         out = DIG[n // 100] + "百"
         r = n % 100
         if r:
-            out += ("零" if r < 10 else "") + num_cn(r)
+            out += ("零" if r < 10 else "") + num_cn(str(r))
         return out
     out = DIG[n // 1000] + "千"
     r = n % 1000
     if r:
-        out += ("零" if r < 100 else "") + num_cn(r)
+        out += ("零" if r < 100 else "") + num_cn(str(r))
     return out
 
 
@@ -71,7 +71,7 @@ def spoken(text):
 
 
 def pys(text):
-    return [p for p in lazy_pinyin(text)]
+    return [p.lower() for p in lazy_pinyin(text)]
 
 
 def heard_units(words):
@@ -81,9 +81,9 @@ def heard_units(words):
         cs = [c for c in w.word if re.match(r"[\u4e00-\u9fffA-Za-z]", c)]
         if not cs:
             continue
-        py = lazy_pinyin("".join(cs))
-        if len(py) != len(cs):          # 拼音段数和字数对不上时不拆，整词当一个单元
-            py = ["".join(py)] * len(cs)
+        # 逐字取拼音并小写：整词取拼音会把 "Scout" 变成一个音节 "Scout"，
+        # 与期望序列里逐字的 s/c/o/u/t 永远对不上，那一句的切点就整体后跳（实测 1 秒）。
+        py = [(lazy_pinyin(c)[0] if lazy_pinyin(c) else c).lower() for c in cs]
         d = (w.end - w.start) / len(cs)
         for i, p in enumerate(py):
             units.append((p, w.start + i * d, w.start + (i + 1) * d))
@@ -140,17 +140,26 @@ def main():
             if o not in first:
                 first[o] = k
 
+        # exp 下标 -> got 下标（只覆盖匹配块内部）
+        pos_of = {}
+        for blk in sm.get_matching_blocks():
+            for j in range(blk.size):
+                pos_of[blk.a + j] = blk.b + j
+
         starts = []
         for bi in range(len(beats)):
-            k = first.get(bi)
-            if k is None:
+            k0 = first.get(bi)
+            if k0 is None:
                 starts.append(None)
                 continue
-            # 在 got 里找匹配到 exp[k] 的位置（取最早且 >= 上一个边界的）
+            k1 = first.get(bi + 1, len(exp))
+            # 只认“第一个字”会在块边界处失败（同音字/漏字），然后被当成缺失、退回
+            # +0.45s 等距估计——实测 4 个 beat 被压成 0.45 秒，下一镜吃掉 7–8 秒。
+            # 改成在**本 beat 的字范围内**找第一个真正匹配上的字。
             pos = None
-            for blk in sm.get_matching_blocks():
-                if blk.a <= k < blk.a + blk.size:
-                    pos = blk.b + (k - blk.a)
+            for k in range(k0, k1):
+                if k in pos_of:
+                    pos = pos_of[k]
                     break
             starts.append(units[pos][1] if pos is not None and pos < len(units) else None)
         # 缺失/倒序的边界用等距估计补，并加单调约束

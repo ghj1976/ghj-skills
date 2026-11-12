@@ -594,3 +594,76 @@ ASR 也回 `6007`，字符匹配就不会跳过；仍然错位时用 `fix_bounda
 
 **注意：** 拼音匹配解决的是「同音字」，不解决「ASR 把整句听成另一句」；后者仍要靠
 `snap_forward_to_pause` 和人工核 2–3 个边界。
+
+## 37. 只有文章插画、没有原片：纯色底占了一半镜头（v7）
+
+**现象：** 47 个 beat 里有 20 个是纯色渐变底（`quote`/`layers`/`flow`/`compare`/`bars`/`kpi`/`list`/`terminal` 一共 18 个 + 2 个 `data`），
+成片被评“像 PPT 配音”。
+
+**原因：** `render.py` 原来规定“结构版式一律深色渐变底”——那是有原片时的正确取舍（照片会抢字），
+但这批素材**根本没有原片**，于是 43% 的镜头只剩渐变 + 程序画的面板。
+
+**修法：** 结构版式的背景优先级改成：有片段 → `clip_bg_fill`（9:16 模糊 + 压暗 0.62）；
+没片段但这一镜有 `img` → `bg_for(img)`（模糊 26px + 按亮度自适应压暗）+ 再 `Image.blend(..., 0.38)`。
+面板本身是不透明/半透明深色，压暗后的照片只提供运动感。实测纯色底 **20 → 2 个（4%）**，
+`qa_video` 的三处冻结窗口 `zero_runs=0`、`identical=0`。
+
+同一个文件里还有两处连带调整：`text` 版式（无窗口时）整块上移（基线 690→570、eyebrow 600→480、装饰引号 350→240），
+因为原位置是按纯色底设计的，垫图后压在画面正中偏下很难看。
+
+## 38. 4 个 beat 被压成 0.45 秒（v7，`align_asr2` 首字匹配）
+
+**现象：** `align_asr2.py` 打印的字/秒表里出现 `48.9 / 40.0 / 68.9 / 57.8`，对应 4 个 beat 只有 0.45 秒，
+紧邻的下一镜 6.99 / 6.39 / 8.15 / 7.87 秒——画面“一句没说完就跳，下一句停很久”。
+
+**原因：** 每个 beat 只取“第一个字”在 `exp` 序列里的下标 `k`，再去匹配块里找 `k` 的对应位置。
+第一个字落在块边界外（同音字、漏字、TTS 吞字）时 `pos=None`，退化成 `prev + 0.45` 的等距估计。
+
+**修法：** 先建 `pos_of`（`exp` 下标 → `got` 下标，只覆盖匹配块内部），再在**本 beat 的字范围**
+`[first[bi], first[bi+1])` 里找第一个真正匹配上的字。改完 4 个值回到 `4.8 / 4.1 / 3.7 / 5.9`。
+
+## 39. 英文开头的句子，切点后跳 1 秒（v7）
+
+**现象：** “Scout 就长在这层底座上，跑在 Bits 里。”这一镜算出来 10.5 字/秒。
+
+**原因：** `heard_units()` 对**整词**取拼音：`lazy_pinyin("Scout")` → `["Scout"]`，长度 1 ≠ 字数 5，
+于是按 `["Scout"]*5` 拆成 5 个相同音节；而期望序列是逐字的 `s/c/o/u/t`，永远匹配不上，
+切点只能落到后面第一个汉字上。
+
+**修法：** 两边都逐字取拼音并小写（`[lazy_pinyin(c)[0].lower() for c in cs]`），
+`Scout` 的 5 个字符就按词内均分时长落到 `s/c/o/u/t`。实测该镜回到 6.5 字/秒。
+
+同一函数里还有两个必修：`num_cn(r)` 递归传了 int（含百/千的数字直接 `TypeError`）；
+`pys()` 大小写不统一（`S` vs `s`）。
+
+## 40. `VIDEO_*` 环境变量没进 `WSLENV`：品牌名静默变成示例文案（v7）
+
+**现象：** 成片左上角写着“AI 失控 11 天”、结尾卡写着“有些事，人类早忘了”——全是 `render.py` 的默认值，
+而 `run_env.sh` 里明明 `export VIDEO_BRAND="AI SRE · Datadog Scout"`。
+
+**原因：** bash 里的变量在 WSL 侧；`python.exe` 是 Windows 进程，**只继承 `WSLENV` 里列出的变量**。
+`os.environ.get("VIDEO_BRAND")` 取不到就静默回落到默认值，脚本不报错、渲染也不报错。
+
+**修法：**
+
+```bash
+VARS="VIDEO_BRAND:VIDEO_TITLE:VIDEO_SUBTITLE:VIDEO_KICKER:VIDEO_TITLE_GHOST:VIDEO_CREDIT"
+VARS="$VARS:VIDEO_END_1:VIDEO_END_2:VIDEO_END_Q:VIDEO_END_CTA:VIDEO_SOURCE"
+VARS="$VARS:VIDEO_DATA_SOURCE:VIDEO_NO_TITLE:VIDEO_OUT:VOX_MODEL:VOICE:TEMPO"
+export WSLENV="${WSLENV:+$WSLENV:}$VARS"
+```
+
+验收：`"$PY" -c "import os;print(os.environ.get('VIDEO_BRAND'))"` 必须打出本文案；
+再抽一帧看左上角。**这条属于“不报错但一眼错”的坑，最容易被漏掉。**
+
+## 41. 结尾卡第二行贴边（v7）
+
+`END_L2 = "它替你先把现场勘查完"`，100px × 9 个中文 = **1000px**，1080 宽只剩 40px，
+低于 60px 安全区，手机上会被平台 UI 压住。`endcard()` 改成按 `textlength` 收到 ≤960px，
+文案本身也收到 7–8 字（`它替你先勘查完` = 778px）。
+
+## 42. `CHUNK_GAP=0.65` 让拼接处停顿 0.68–0.78s（v7）
+
+`trim()` 会给每段两端各留 0.08s pad，于是实际空白 ≈ `CHUNK_GAP + 0.16`。
+0.65 拼出来是 0.68–0.78s，`check_audio.py` 的“正文最长停顿 ≤0.65s”直接 FAIL。
+改 0.45 后实测 0.54–0.62s，四段拼接处听不出断层。

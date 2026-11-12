@@ -21,7 +21,8 @@ OUT = BASE / "out"
 OUT.mkdir(exist_ok=True)
 SR = 48000
 LEAD = 1.0          # 开头留白
-CHUNK_GAP = 0.65    # 长段之间的空白
+CHUNK_GAP = 0.45    # 长段之间的空白：trim 两端各留 0.08s pad，0.65 实测成 0.68–0.78s，
+                    # 会被 check_audio 的“最长停顿 ≤0.65s”判 FAIL；0.45 落到约 0.58s
 TAIL = 2.2          # 结尾卡停留
 GROUPS = [(i, min(i + 1, len(script_data.SCENES) - 1))
           for i in range(0, len(script_data.SCENES), 2)]   # 每段 2 个场景

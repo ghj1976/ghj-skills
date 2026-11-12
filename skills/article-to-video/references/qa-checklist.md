@@ -2,6 +2,19 @@
 
 在项目目录下执行（脚本和 `script_data.py` 放在一起）。默认 WinGet 路径不存在时，先设 `FFMPEG`。
 
+## 先做三件“不报错但一眼错”的确认
+
+```bash
+# 1) 环境变量真的进了 Windows python？（否则品牌名/结尾卡是示例文案，见规则 33）
+"$PY" -c "import os;print(os.environ.get('VIDEO_BRAND'), os.environ.get('VIDEO_END_2'))"
+
+# 2) 切点有没有 0.45 秒的鬼镜头？（出现 40+ 字/秒就是对齐坏了，见阶段 4 第 11 条）
+grep -o "c/s [0-9. ]*" <对齐日志>
+
+# 3) 纯色底还剩几个镜头？（没有原片时应该只剩 data 卡）
+python -c "import script_data as d; bs=d.flatten(); print(sum(1 for b in bs if b['layout']=='data'), '/', len(bs))"
+```
+
 ## 自动检查
 
 ```bash
