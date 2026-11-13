@@ -790,6 +790,50 @@ python check_voice.py --baseline ../../work/<上一版>/audio   # 与上一版�
 
 `scripts/render.py` 是可直接用的竖屏渲染器。首次渲染前改项目副本里的 `BRAND`、`TITLE_MAIN`、`TITLE_SUB`、`TITLE_KICKER`、`TITLE_CREDIT`、`END_L1/L2/Q/CTA/SOURCE`、`DATA_SOURCE`，或设置对应的 `VIDEO_*` 环境变量；开场第一句就是钩子/原声时设 `VIDEO_NO_TITLE=1` 跳过那 1 秒标题卡。不要带着示例品牌名出片。
 
+## 速度：一条 3 分钟片子的耗时预算（v8）
+
+实测环境：i9-14900HX（24 核 / 32 线程）、RTX 5080 Laptop 16GB、Windows python + WSL 调用。
+片长 3:14、5811 帧、4 段配音（190 秒音频）。
+
+| 阶段 | 优化前 | 现在 | 手段 |
+|---|---|---|---|
+| 配音 4 段 | 32 min | **32 min** | 模型本身约 7× 实时，单卡串行；显存峰值 6.3GB（reserved 7.3GB），16GB 卡塞不下第二个进程 |
+| 对齐 + 混音 + SRT | 4 min | **4 min** | — |
+| 渲染 5811 帧 | 25 min | **8 min 单进程 / 2.5 min 6 进程** | 三处按图缓存 + crop+resize 推近 + 分段并发 |
+| 改一句大字重渲 | 25 min | **2.5 min** | 同上 |
+
+**总耗时从约 2 小时降到约 40 分钟，其中配音占 75%。** 再想快只能换更快的 TTS 或第二块卡。
+
+### 渲染加速做了什么（`scripts/render.py` 已内置）
+
+1. `image_card()` 的卡片（填底 + LANCZOS 缩放 + 模糊）按 `(img, y, h)` 缓存。原来每帧重做整套，
+   一个图片镜头 40ms/帧 → 1.7ms。这是最大的一笔。
+2. `bg_for_dark()`：结构版式与 `data` 卡的压暗底按图缓存，省掉每帧整幅 `Image.blend`（~15ms）。
+3. `slow_zoom()` 用 `crop().resize()` 代替 `AFFINE transform`：同样是双线性重采样，53→24ms/帧；
+   两条渲染路径的 PSNR 43.7dB，肉眼无差。
+4. `light_sweep()` 光带只画一次，之后带 mask `paste` 到 740×1920 的带状区域：19→4ms/帧。
+5. `python render.py parallel 6`：按帧号切 6 段并发渲染（每段各自 x264 编码），
+   `concat -c copy` 拼接后混入音轨。输出帧数（5811）、时长（193.700s）、逐帧内容与单进程一致
+   （PSNR 43.7dB），`qa_video.py` PASS。实测 1 进程 12.2fps / 3 进程 4.1min / 6 进程 2.5min；
+   24 核上再多收益递减（每进程被压到 6.9fps）。
+
+### 哪些不要动
+
+- 别为了快把 `inference_timesteps` 降到 6 以下、也别给 atempo 叠两次：音色和清晰度会掉。
+- 别在 16GB 卡上同时跑两个 VoxCPM2 进程：单进程 reserved 已 7.3GB，长句还会涨。
+- 别把 `slow_zoom` 改成隔帧复用：编码器会把没变的帧判成冻结帧，`qa_video.py` 直接不过。
+
+### 省时间的流程（比调参更值钱）
+
+1. **先定稿台词，再配音。** 改一个 `text` 就要重配一整段（8–30 分钟）；改 `big`/`eyebrow`/`layout`
+   不碰音频，重渲 2.5 分钟即可。本片就因为开头一句改了两次、丢了大半小时。
+2. **等配音的时间拿来做版式验证。** 用 `script_data.flatten()` 造一份假 `out/timeline.json`
+   （均分时长），跑 `render.py preview <秒>` 把所有版式、字号、图文重复先看掉——配音还没回来，
+   画面问题已经改完。
+3. **改完 `big`/`eyebrow` 必须重跑 `build_audio_cont.py`。** `render.py` 读的是 `out/timeline.json`
+   里烘焙好的 beat，不会重新 import `script_data`。
+4. QA 三件套（`check_text_gap` / `check_audio` / `qa_video`）约 2 分钟，别省。
+
 ## 阶段 6 — QA 与交付
 
 自动检查（`scripts/qa_video.py`）：
@@ -1011,7 +1055,7 @@ python check_title.py --file out/发布文案.md     # 不过就改到过，退�
 - `scripts/publish_copy_template.md` — 发布文案模板：短标题 / 摘要 / 话题 / 置顶评论 / 自检表。
 - `scripts/check_title.py` — 短标题字符门禁：平台只认书名号/引号/冒号/加号/问号/百分号/摄氏度，逗号换空格；超 16 字、含 `@` 等直接 FAIL。
 - `scripts/image_margins.py` — 量配图空白边（四角色/alpha → 墨迹 bbox），按内容占比建议 `card` / `poster` / 不裁，可 `--crop` 生成 `assets/` 衍生图。
-- `scripts/render.py` — 竖屏渲染器（静帧推近 + 动态 B-roll + 自适应压暗 + 下划线修复 + `poster` 竖卡 + `cover` 整屏 + **`phone` 设备卡（竖屏整帧不裁）** + **`diptych` 前后对照** + 超宽横幅深色卡底 + **文字类版式的满幅视频窗口 `clip_window`** + **图表版式的模糊动态底 `clip_bg_fill`** + `assets/` 回落；9 种结构版式 `chat`/`layers`/`flow`/`compare`/`bars`/`kpi`/`list`/`terminal`/`quote`，数据走 beat 的 `extras`；大字几何由 `layout_text_box()` / `fit_text_in_box()` 统一决定）。
+- `scripts/render.py` — 竖屏渲染器（**`python render.py parallel 6` 多进程分段渲染**；静帧推近 + 动态 B-roll + 自适应压暗 + 下划线修复 + `poster` 竖卡 + `cover` 整屏 + **`phone` 设备卡（竖屏整帧不裁）** + **`diptych` 前后对照** + 超宽横幅深色卡底 + **文字类版式的满幅视频窗口 `clip_window`** + **图表版式的模糊动态底 `clip_bg_fill`** + `assets/` 回落；9 种结构版式 `chat`/`layers`/`flow`/`compare`/`bars`/`kpi`/`list`/`terminal`/`quote`，数据走 beat 的 `extras`；大字几何由 `layout_text_box()` / `fit_text_in_box()` 统一决定）。
 - `scripts/check_text_gap.py` — 大字压没压画面：逐 beat 复算字形 bbox 与卡片顶边，间距 <12px 判 FAIL。
 - `scripts/article_prep.py` — **文章地址 → 项目**：路径归一（`E:\` ↔ `/mnt/e/`、`%20`、全角引号、UNC）、
   图片解析并复制成 `assets/img01.png`、每张图的内容占比与 `card/poster/裁切` 建议、字数与时长预估、

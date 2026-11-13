@@ -28,8 +28,12 @@ import script_data  # noqa: E402
 
 AUD = BASE / "audio"
 MODEL_SIZE = sys.argv[1] if len(sys.argv) > 1 else "small"
-GROUPS = [(i, min(i + 1, len(script_data.SCENES) - 1))
-          for i in range(0, len(script_data.SCENES), 2)]
+try:                       # 项目可在 project_config.GROUPS 里自定义分段（本片 4 段）
+    from project_config import GROUPS as _GROUPS
+except ImportError:
+    _GROUPS = None
+GROUPS = _GROUPS or [(i, min(i + 1, len(script_data.SCENES) - 1))
+                     for i in range(0, len(script_data.SCENES), 2)]
 try:
     from project_config import EXCLUDE
     EXCLUDE = getattr(__import__("project_config"), "EXCLUDE", set())

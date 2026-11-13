@@ -130,10 +130,16 @@ def main():
 
     rows, f0s, ok = [], [], True
     lo, hi = ref_f0 * (1 - a.f0_tol), ref_f0 * (1 + a.f0_tol)
-    per = 2  # 每段 2 个场景，与 build_audio_cont 的 GROUPS 一致
+    try:                      # 与 build_audio_cont 共用同一份分段
+        from project_config import GROUPS as _G
+    except ImportError:
+        _G = None
+    groups = _G or [(i * 2, min(i * 2 + 1, len(script_data.SCENES) - 1))
+                    for i in range(len(chunks))]
     for i, c in enumerate(chunks):
         f0, dur = f0_median(c)
-        n = sum(len(b["text"]) for b in beats if i * per <= b["scene"] <= i * per + per - 1)
+        lo_s, hi_s = groups[i] if i < len(groups) else (i * 2, i * 2 + 1)
+        n = sum(len(b["text"]) for b in beats if lo_s <= b["scene"] <= hi_s)
         cps = n / dur if dur else 0
         r = corr(ltas(c), ref_l)
         sim = cos(ref_m, mfcc_emb(c))

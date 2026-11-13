@@ -39,8 +39,12 @@ SEED = int(os.environ.get("VOX_SEED", "20"))
 CFG = float(os.environ.get("VOX_CFG", "2.0"))
 VOICE = os.environ.get("VOICE", "q1")
 VOICE_DIR = BASE / "voices" / VOICE
-GROUPS = [(i, min(i + 1, len(script_data.SCENES) - 1))
-          for i in range(0, len(script_data.SCENES), 2)]   # 每段 2 个场景
+try:                       # 项目可在 project_config.GROUPS 里自定义分段（本片 4 段）
+    from project_config import GROUPS as _GROUPS
+except ImportError:
+    _GROUPS = None
+GROUPS = _GROUPS or [(i, min(i + 1, len(script_data.SCENES) - 1))
+                     for i in range(0, len(script_data.SCENES), 2)]   # 每段 2 个场景
 try:
     import project_config as _pc
     EXCLUDE = getattr(_pc, "EXCLUDE", set())

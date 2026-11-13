@@ -31,8 +31,12 @@ sys.path.insert(0, str(BASE))
 import script_data  # noqa: E402
 
 ASR = BASE / "audio" / "asr_times.json"
-GROUPS = [(i, min(i + 1, len(script_data.SCENES) - 1))
-          for i in range(0, len(script_data.SCENES), 2)]
+try:                       # 项目可在 project_config.GROUPS 里自定义分段（本片 4 段）
+    from project_config import GROUPS as _GROUPS
+except ImportError:
+    _GROUPS = None
+GROUPS = _GROUPS or [(i, min(i + 1, len(script_data.SCENES) - 1))
+                     for i in range(0, len(script_data.SCENES), 2)]
 
 
 def silences(gi, th=-42.0, min_len=0.10):
