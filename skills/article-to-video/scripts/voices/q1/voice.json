@@ -5,8 +5,14 @@
   "prompt_wav": "prompt_ref.wav",
   "reference_wav": "reference_ref.wav",
   "source": "02/q1.mp4（29.7 秒、带背景音乐的解说视频）",
-  "prompt_span_s": [8.66, 14.32],
-  "reference_span_s": [8.66, 22.72],
+  "prompt_span_s": [
+    8.66,
+    14.32
+  ],
+  "reference_span_s": [
+    8.66,
+    22.72
+  ],
   "preprocess": "highpass 70Hz → VoxCPM2 ZIP-Enhancer 去伴奏 → 峰值归一 0.9",
   "sample_rate": 16000,
   "prompt_duration_s": 5.72,
@@ -15,5 +21,7 @@
   "natural_cps": 6.6,
   "atempo": 0.92,
   "cps_after_tempo": 5.9,
-  "notes": "带 BGM 的参考必须先过 ZIP-Enhancer，否则克隆会带底噪；四段实测基频 225–251Hz，源音约 240–257Hz。自然语速偏快，0.92 倍 atempo 后 5.7–6.1 字/秒。"
+  "notes": "带 BGM 的参考必须先过 ZIP-Enhancer，否则克隆会带底噪；四段实测基频 225–251Hz，源音约 240–257Hz。自然语速偏快，0.92 倍 atempo 后 5.7–6.1 字/秒。",
+  "preferred_seed": 22,
+  "seed_note": "同一参考音换种子基频能差 25Hz（实测 seed 20/21/23 = 252–263Hz，seed 22 = 235–237Hz，参考音 238.6Hz）。tts_chunks.py 默认读这个字段；换了参考音要重新量一遍再改这里。"
 }

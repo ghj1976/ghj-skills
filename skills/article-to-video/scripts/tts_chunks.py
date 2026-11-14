@@ -35,7 +35,6 @@ AUD = BASE / "audio"
 AUD.mkdir(exist_ok=True)
 MODEL = os.environ.get("VOX_MODEL", "openbmb/VoxCPM2")
 STEPS = int(os.environ.get("VOX_STEPS", "10"))
-SEED = int(os.environ.get("VOX_SEED", "20"))
 CFG = float(os.environ.get("VOX_CFG", "2.0"))
 VOICE = os.environ.get("VOICE", "q1")
 VOICE_DIR = BASE / "voices" / VOICE
@@ -73,6 +72,43 @@ TEMPO = float(os.environ.get("TEMPO")
               else (_CFG_TEMPO if _CFG_TEMPO is not None else META.get("atempo", 1.0)))
 
 
+def voice_seed(meta):
+    """种子优先级：VOX_SEED 环境变量 > voice.json 的 preferred_seed > 20。
+
+    为什么种子要记在音色里、不能写死：同一参考音换种子，基频能差 25Hz。
+    q1 实测（参考音 238.6Hz）：seed 22 = 237.2 / 234.5，seed 20/21/23 = 252–263。
+    只认 seed 20 的后果是——先跑一轮 3 段（15 分钟），全部跑完才发现两段超标，
+    再串行重跑 4 个种子 × 2 段（48 分钟）。种子对了，这一整轮重跑不存在。
+    """
+    env = os.environ.get("VOX_SEED")
+    if env:
+        return int(env), "env"
+    if meta.get("preferred_seed") is not None:
+        return int(meta["preferred_seed"]), "voice.json"
+    return 20, "default"
+
+
+SEED, SEED_SRC = voice_seed(META)
+
+
+def f0_report(path):
+    """段末立刻量一次基频并打出来——门禁前移，避免"全跑完才发现音区不对"。"""
+    try:
+        import librosa
+        import numpy as np
+        y, sr = sf.read(str(path), dtype="float32")
+        if y.ndim > 1:
+            y = y.mean(1)
+        f = librosa.pyin(y[:min(len(y), sr * 20)], fmin=60, fmax=400,
+                         sr=sr, frame_length=2048)[0]
+        f = f[~np.isnan(f)]
+        if not len(f):
+            return None
+        return float(np.median(f))
+    except Exception:
+        return None
+
+
 def chunk_text(gi):
     a, b = GROUPS[gi]
     parts = [x["text"] for x in script_data.flatten()
@@ -102,7 +138,12 @@ def main():
             f"缺少音色参考 {PROMPT}：用 make_voice_ref.py 生成，或拷一份 4–8 秒、文本已知的音频到 audio/prompt_ref.wav")
     if not PROMPT_TEXT:
         raise SystemExit("缺少 PROMPT_TEXT：voice.json 没有 prompt_text，也没设环境变量")
-    print(f"voice={VOICE} tempo={TEMPO}\n  prompt={PROMPT}\n  reference={REFERENCE}", flush=True)
+    print(f"voice={VOICE} tempo={TEMPO} seed={SEED}（{SEED_SRC}）\n"
+          f"  prompt={PROMPT}\n  reference={REFERENCE}", flush=True)
+    ref_f0 = f0_report(PROMPT)
+    if ref_f0:
+        print(f"  参考音 f0={ref_f0:.1f}Hz（写进 voice.json 的 preferred_seed 就是按它挑的）",
+              flush=True)
 
     model = VoxCPM.from_pretrained(MODEL, load_denoiser=False, optimize=False, device="cuda")
     cache = model.tts_model.build_prompt_cache(
@@ -129,6 +170,14 @@ def main():
               f"gen={time.time()-t:.0f}s", flush=True)
         if abs(TEMPO - 1.0) > 1e-3:
             apply_tempo(out)
+        f0 = f0_report(out)
+        if f0 and ref_f0:
+            dev = (f0 - ref_f0) / ref_f0
+            flag = "ok" if abs(dev) <= 0.08 else "FAIL 音区"
+            print(f"  chunk {gi} f0={f0:.1f}Hz（参考 {ref_f0:.1f}，偏差 {dev:+.1%}）{flag}"
+                  + ("" if abs(dev) <= 0.08 else
+                     f" → python regen_chunk2.py --chunks {gi} --seeds "
+                     f"{','.join(str(x) for x in (22, 20, 21, 23) if x != SEED)}"), flush=True)
 
 
 if __name__ == "__main__":

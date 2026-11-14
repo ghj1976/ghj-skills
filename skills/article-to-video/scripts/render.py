@@ -70,6 +70,23 @@ if not NO_TITLE:
     print("[warn] 标题卡开启：0–1 秒是一张静态标题卡。若开场第一句就是钩子，"
           "按「开场铁律」设 VIDEO_NO_TITLE=1。", flush=True)
 
+def plate_preflight():
+    """渲染前把片尾/品牌文案打出来。
+
+    为什么值得：`VIDEO_*` 没进 `WSLENV` 时 `os.environ.get` 会静默回落成示例文案，
+    成片能出、错在最显眼的两处；等渲完 3 分钟再抽帧发现，就得整片重渲一轮（实测 4 分钟）。
+    这里把六行文案直接打在两行日志里，回落成示例值时再单独告警。
+    """
+    print(f"[plate] brand={BRAND} | end1={END_L1} | end2={END_L2}", flush=True)
+    print(f"[plate] q={END_Q} | cta={END_CTA}", flush=True)
+    print(f"[plate] source={END_SOURCE} | credit={TITLE_CREDIT} | data={DATA_SOURCE}", flush=True)
+    demo = ["AI 失控 11 天", "有些事，人类早忘了", "AI 还在较真", "数据来自公开资料"]
+    hit = [x for x in demo if x in (BRAND, TITLE_MAIN, END_L1, END_L2, DATA_SOURCE)]
+    if hit:
+        print(f"[warn] 片尾/品牌还是示例文案 {hit}：VIDEO_* 十有八九没进 WSLENV（规则 33）",
+              flush=True)
+
+
 WHITE = (247, 248, 250)
 MUTED = (158, 167, 180)
 ORANGE = (255, 138, 61)
@@ -1558,6 +1575,8 @@ if __name__ == "__main__":
     ap.add_argument("nums", nargs="*")
     ap.add_argument("--assets", default=None, help="folder containing the stills")
     a = ap.parse_args()
+    if a.mode != "segment":
+        plate_preflight()
     if a.assets:
         ASSET_DIR = Path(a.assets)
         ROOT = ASSET_DIR
